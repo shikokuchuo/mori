@@ -40,11 +40,10 @@
 #' the resulting file is meaningful only on the same machine while the
 #' region is still alive. For portable storage or transport across
 #' machines, materialise into a regular in-memory copy first with
-#' `x[]`, which deep-duplicates atomic vectors, strings, and nested
-#' lists:
+#' `rlang::duplicate()`, which deep-duplicates the object:
 #'
 #' ```r
-#' saveRDS(x[], file = "x.rds")
+#' saveRDS(rlang::duplicate(x), file = "x.rds")
 #' ```
 #'
 #' @examples

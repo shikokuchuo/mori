@@ -50,10 +50,9 @@ Direct \code{\link[=saveRDS]{saveRDS()}} of a shared object writes only the SHM 
 the resulting file is meaningful only on the same machine while the
 region is still alive. For portable storage or transport across
 machines, materialise into a regular in-memory copy first with
-\code{x[]}, which deep-duplicates atomic vectors, strings, and nested
-lists:
+\code{rlang::duplicate()}, which deep-duplicates the object:
 
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{saveRDS(x[], file = "x.rds")
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{saveRDS(rlang::duplicate(x), file = "x.rds")
 }\if{html}{\out{</div>}}
 }
 
