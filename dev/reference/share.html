@@ -97,6 +97,17 @@ collector may free the shared memory before a consumer process has
 mapped it.</p>
     </div>
     <div class="section level2">
+    <h2 id="persistence">Persistence<a class="anchor" aria-label="anchor" href="#persistence"></a></h2>
+
+
+<p>Direct <code><a href="https://rdrr.io/r/base/readRDS.html" class="external-link">saveRDS()</a></code> of a shared object writes only the SHM name, so
+the resulting file is meaningful only on the same machine while the
+region is still alive. For portable storage or transport across
+machines, materialise into a regular in-memory copy first with
+<code><a href="https://rlang.r-lib.org/reference/duplicate.html" class="external-link">rlang::duplicate()</a></code>, which deep-duplicates the object:</p>
+<p></p><div class="sourceCode r"><pre><code><span><span class="fu"><a href="https://rdrr.io/r/base/readRDS.html" class="external-link">saveRDS</a></span><span class="op">(</span><span class="fu">rlang</span><span class="fu">::</span><span class="fu"><a href="https://rlang.r-lib.org/reference/duplicate.html" class="external-link">duplicate</a></span><span class="op">(</span><span class="va">x</span><span class="op">)</span>, file <span class="op">=</span> <span class="st">"x.rds"</span><span class="op">)</span></span></code></pre><p></p></div>
+    </div>
+    <div class="section level2">
     <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a></h2>
     <div class="dont-index"><p><code><a href="map_shared.html">map_shared()</a></code> to open a shared region by name,
 <code><a href="shared_name.html">shared_name()</a></code> to extract the SHM name.</p></div>

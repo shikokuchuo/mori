@@ -48,6 +48,18 @@ shared memory is kept alive by the R object reference — if the result is
 used as a temporary (not assigned), the garbage collector may free the
 shared memory before a consumer process has mapped it.
 
+## Persistence
+
+Direct [`saveRDS()`](https://rdrr.io/r/base/readRDS.html) of a shared
+object writes only the SHM name, so the resulting file is meaningful
+only on the same machine while the region is still alive. For portable
+storage or transport across machines, materialise into a regular
+in-memory copy first with
+[`rlang::duplicate()`](https://rlang.r-lib.org/reference/duplicate.html),
+which deep-duplicates the object:
+
+    saveRDS(rlang::duplicate(x), file = "x.rds")
+
 ## See also
 
 [`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md)
