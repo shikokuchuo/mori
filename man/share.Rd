@@ -44,6 +44,18 @@ if the result is used as a temporary (not assigned), the garbage
 collector may free the shared memory before a consumer process has
 mapped it.
 }
+\section{Persistence}{
+
+Direct \code{\link[=saveRDS]{saveRDS()}} of a shared object writes only the SHM name, so
+the resulting file is meaningful only on the same machine while the
+region is still alive. For portable storage or transport across
+machines, materialise into a regular in-memory copy first with
+\code{rlang::duplicate()}, which deep-duplicates the object:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{saveRDS(rlang::duplicate(x), file = "x.rds")
+}\if{html}{\out{</div>}}
+}
+
 \examples{
 x <- share(rnorm(100))
 sum(x)
