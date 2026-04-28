@@ -35,6 +35,18 @@
 #' collector may free the shared memory before a consumer process has
 #' mapped it.
 #'
+#' @section Persistence:
+#' Direct [saveRDS()] of a shared object writes only the SHM name, so
+#' the resulting file is meaningful only on the same machine while the
+#' region is still alive. For portable storage or transport across
+#' machines, materialise into a regular in-memory copy first with
+#' `x[]`, which deep-duplicates atomic vectors, strings, and nested
+#' lists:
+#'
+#' ```r
+#' saveRDS(x[], file = "x.rds")
+#' ```
+#'
 #' @examples
 #' x <- share(rnorm(100))
 #' sum(x)
