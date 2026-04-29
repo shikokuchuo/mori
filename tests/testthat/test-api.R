@@ -106,11 +106,27 @@ test_that("is_shared is TRUE across all shared ALTREP kinds (consumer-side)", {
   expect_true(is_shared(zz[[1]][["s"]]))
 })
 
-test_that("shared_name returns '' for a sub-list", {
-  x <- share(list(list(1)))
-  sub <- x[[1]]
-  expect_true(is_shared(sub))
-  expect_identical(shared_name(sub), "")
+test_that("shared_name returns root SHM name for sub-lists and elements", {
+  x <- share(list(a = 1:5, sub = list(b = letters, c = 1:10)))
+  nm <- shared_name(x)
+  expect_gt(nchar(nm), 0L)
+
+  expect_identical(shared_name(x[[1]]), nm)
+  expect_identical(shared_name(x[["sub"]]), nm)
+  expect_identical(shared_name(x[["sub"]][["b"]]), nm)
+  expect_identical(shared_name(x[["sub"]][["c"]]), nm)
+
+  y <- map_shared(nm)
+  expect_identical(shared_name(y[["sub"]]), nm)
+  expect_identical(shared_name(y[["sub"]][["b"]]), nm)
+})
+
+test_that("map_shared(shared_name(sub)) yields the root", {
+  x <- share(list(outer = list(a = 1:5, b = letters)))
+  sub <- x[["outer"]]
+  root <- map_shared(shared_name(sub))
+  expect_identical(root[["outer"]][["a"]][], 1:5)
+  expect_identical(root[["outer"]][["b"]][], letters)
 })
 
 test_that("share() is idempotent on already-shared objects", {

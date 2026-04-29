@@ -106,7 +106,10 @@ is_shared <- function(x) .Call(mori_is_shared, x)
 #' @param x a shared object as returned by [share()] or [map_shared()].
 #'
 #' @return A character string identifying the shared memory region, or
-#'   the empty string `""` if `x` is not a shared object.
+#'   the empty string `""` if `x` is not a shared object. For a sub-list
+#'   or element extracted from a shared list, the name returned is the
+#'   root region's name; mapping it via [map_shared()] yields the root
+#'   object, from which the sub-list or element can be re-accessed.
 #'
 #' @examples
 #' x <- share(rnorm(100))

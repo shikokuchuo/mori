@@ -11,7 +11,10 @@ shared_name(x)
 }
 \value{
 A character string identifying the shared memory region, or
-the empty string \code{""} if \code{x} is not a shared object.
+the empty string \code{""} if \code{x} is not a shared object. For a sub-list
+or element extracted from a shared list, the name returned is the
+root region's name; mapping it via \code{\link[=map_shared]{map_shared()}} yields the root
+object, from which the sub-list or element can be re-accessed.
 }
 \description{
 Extract the SHM region name from a shared object. This name can be
