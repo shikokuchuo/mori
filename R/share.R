@@ -67,7 +67,9 @@ share <- function(x) .Call(mori_create, x)
 #' @return The R object stored in the shared memory region, or `NULL` if
 #'   `name` is not a valid shared memory name (wrong type, length, `NA`,
 #'   or missing the `mori` prefix). If `name` is well-formed but the
-#'   region is absent or corrupted, an error is raised.
+#'   region is absent or corrupted, an error is raised. The returned
+#'   object is always the root of the region; sub-lists or elements
+#'   are reached by indexing into it.
 #'
 #' @examples
 #' x <- share(1:100)
