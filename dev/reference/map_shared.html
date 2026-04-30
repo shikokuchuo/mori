@@ -72,7 +72,9 @@ region, as returned by <code><a href="shared_name.html">shared_name()</a></code>
     <p>The R object stored in the shared memory region, or <code>NULL</code> if
 <code>name</code> is not a valid shared memory name (wrong type, length, <code>NA</code>,
 or missing the <code>mori</code> prefix). If <code>name</code> is well-formed but the
-region is absent or corrupted, an error is raised.</p>
+region is absent or corrupted, an error is raised. The returned
+object is always the root of the region; sub-lists or elements
+are reached by indexing into it.</p>
     </div>
     <div class="section level2">
     <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a></h2>

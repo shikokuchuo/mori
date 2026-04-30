@@ -33,6 +33,7 @@ garbage collected
 ## Installation
 
 ``` r
+
 install.packages("mori")
 ```
 
@@ -45,6 +46,7 @@ working transparently with mirai and any R serialization path. Shared
 memory is automatically freed when the object is garbage collected.
 
 ``` r
+
 library(mori)
 
 # Share a vector — returns an ALTREP-backed object
@@ -66,6 +68,7 @@ opens a shared region by name — useful for accessing the same data from
 another process without serialization:
 
 ``` r
+
 x <- share(1:1e6)
 
 # Extract the SHM name
@@ -86,6 +89,7 @@ hooks ensure only the SHM name crosses the wire, and the daemon maps the
 same physical memory.
 
 ``` r
+
 library(lobstr)
 library(mirai)
 
@@ -110,6 +114,7 @@ travels as a reference to its position in the parent shared region, not
 as the full data:
 
 ``` r
+
 daemons(3)
 
 # Share a list — all 3 vectors in a single shared region
@@ -137,6 +142,7 @@ payload ~700,000 times smaller, which translates into a significant
 saving in memory usage as well as total runtime:
 
 ``` r
+
 daemons(8)
 
 # 200 MB data frame — 5 columns × 5M rows
