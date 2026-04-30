@@ -118,11 +118,12 @@ test_that("is_shared TRUE for sub-lists and nested elements", {
   expect_true(is_shared(x$outer$b))
 })
 
-test_that("shared_name returns root name for root, blank for sub-lists", {
+test_that("shared_name returns root name for root and sub-lists alike", {
   x <- share(list(outer = list(a = 1:5)))
   nm <- shared_name(x)
   expect_true(nzchar(nm))
-  expect_identical(shared_name(x$outer), "")
+  expect_identical(shared_name(x$outer), nm)
+  expect_identical(shared_name(x$outer$a), nm)
 })
 
 test_that("deeply nested structure (3 list levels) round-trips", {

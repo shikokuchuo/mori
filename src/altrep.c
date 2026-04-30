@@ -927,10 +927,15 @@ SEXP mori_shm_name(SEXP x) {
   if (TYPEOF(d1) != EXTPTRSXP ||
       R_ExternalPtrTag(d1) != mori_owned_tag)
     return R_BlankScalarString;
-  SEXP prot = R_ExternalPtrProtected(d1);
-  if (R_ExternalPtrTag(prot) != mori_shm_tag)
-    return R_BlankScalarString;  /* element or sub-list */
-  mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(prot);
+  /* Walk keeper chain through owned-tag hops to the shm-tag terminus.
+     Zero hops for root/standalone; one or more for sub-lists and elements. */
+  SEXP hop = R_ExternalPtrProtected(d1);
+  while (TYPEOF(hop) == EXTPTRSXP &&
+         R_ExternalPtrTag(hop) == mori_owned_tag)
+    hop = R_ExternalPtrProtected(hop);
+  if (TYPEOF(hop) != EXTPTRSXP || R_ExternalPtrTag(hop) != mori_shm_tag)
+    return R_BlankScalarString;
+  mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(hop);
   return Rf_mkString(shm->name);
 }
 
