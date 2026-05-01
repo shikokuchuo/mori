@@ -11,7 +11,6 @@ static R_altrep_class_t mori_logical_class;
 static R_altrep_class_t mori_raw_class;
 static R_altrep_class_t mori_complex_class;
 static R_altrep_class_t mori_string_class;
-static SEXP mori_tag;        /* ALTLIST cache sentinel (VECSXP marker, not an extptr tag) */
 static SEXP mori_shm_tag;    /* tag on SHM mapping extptrs (addr is mori_shm *) */
 static SEXP mori_host_tag;   /* tag on host-only unlink extptrs (addr is mori_shm *) */
 static SEXP mori_owned_tag;  /* tag on every mori ALTREP data1 extptr; addr type dispatched via TYPEOF(x) */
@@ -85,14 +84,159 @@ static inline void mori_restore_attrs(SEXP result, unsigned char *buf,
   UNPROTECT(1);
 }
 
-// SHM name validation for unserialize dispatch --------------------------------
+// Identifier formatter, chain walker, and parser -----------------------------
 
-static inline int mori_is_shm_name(const char *s) {
-#ifdef _WIN32
-  return strncmp(s, "Local\\mori_", 11) == 0;
-#else
-  return s[0] == '/' && strncmp(s + 1, "mori_", 5) == 0;
-#endif
+/* Tight u32 → decimal emit. Caller guarantees buffer has >= 10 bytes free. */
+static inline char *mori_u32_to_dec(char *p, uint32_t v) {
+  char tmp[10];
+  int n = 0;
+  do { tmp[n++] = (char)('0' + v % 10); v /= 10; } while (v);
+  while (n--) *p++ = tmp[n];
+  return p;
+}
+
+/* Format "<name>" (len == 0) or "<name>[i1+1,i2+1,...]" (len > 0) into buf.
+   Caller passes 1-based-internal path (already -1 indices that the formatter
+   does not adjust); on entry path_internal[i] is 0-based and the formatter
+   adds 1 per element. Returns bytes written (excluding NUL), or -1 on
+   defensive truncation. */
+static int mori_format_path(char *buf, size_t buflen,
+                            const char *name, size_t name_len,
+                            const int32_t *path_internal, int len) {
+
+  if (name_len + 2 + 11 * (size_t) len >= buflen)
+    return -1;  /* defensive; sized for MORI_MAX_PATH worst case */
+
+  char *p = buf;
+  memcpy(p, name, name_len);
+  p += name_len;
+
+  if (len == 0) {
+    *p = '\0';
+    return (int)(p - buf);
+  }
+
+  *p++ = '[';
+  for (int i = 0; i < len; i++) {
+    p = mori_u32_to_dec(p, (uint32_t)(path_internal[i] + 1));
+    *p++ = ',';
+  }
+  p[-1] = ']';                     /* overwrite trailing ',' */
+  *p = '\0';
+  return (int)(p - buf);
+}
+
+/* Walk owned-tag hops up from keeper_extptr (= R_ExternalPtrProtected of the
+   leaf's data1), placing the leaf_index (if >= 0) at the rear of `path` and
+   each collected view->index ahead of it as the walk proceeds. The result
+   ends up in root→leaf order in path[rear..MORI_MAX_PATH) without a second
+   pass. Returns 0 on success, -1 on MORI_MAX_PATH overflow, -2 on malformed
+   chain (terminus not shm_tag, or NULL addr). */
+static int mori_format_chain(SEXP keeper_extptr, int32_t leaf_index,
+                             char *buf, size_t buflen) {
+
+  int32_t path[MORI_MAX_PATH];
+  int rear = MORI_MAX_PATH;            /* exclusive upper bound; fill toward 0 */
+
+  if (leaf_index >= 0) path[--rear] = leaf_index;
+
+  SEXP hop = keeper_extptr;
+  while (TYPEOF(hop) == EXTPTRSXP &&
+         R_ExternalPtrTag(hop) == mori_owned_tag) {
+    mori_list_view *view = (mori_list_view *) R_ExternalPtrAddr(hop);
+    if (view == NULL) return -2;
+    int32_t idx = view->index;
+    if (idx >= 0) {
+      if (rear == 0) return -1;
+      path[--rear] = idx;
+    }
+    hop = R_ExternalPtrProtected(hop);
+  }
+
+  if (TYPEOF(hop) != EXTPTRSXP || R_ExternalPtrTag(hop) != mori_shm_tag)
+    return -2;
+  mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(hop);
+  if (shm == NULL) return -2;
+
+  return mori_format_path(buf, buflen, shm->name, shm->name_len,
+                          path + rear, MORI_MAX_PATH - rear) < 0 ? -1 : 0;
+}
+
+/* Parse "<prefix>" or "<prefix>[i1,i2,...]" with 1-based positive indices.
+   Returns 1 (full match with path), 0 (prefix only), or -1 (malformed).
+   On rc 0 or 1, name_out is NUL-terminated with the prefix (variable
+   length, bounded by name_out_size - 1; pass MORI_NAME_MAX). On rc 1,
+   path_out (capacity MORI_MAX_PATH) is filled with 0-based indices and
+   *path_len is set to the count (>= 1). On rc -1, all outputs are
+   indeterminate. */
+static int mori_parse_identifier(const char *s,
+                                 char *name_out, size_t name_out_size,
+                                 int32_t *path_out, int *path_len) {
+
+  /* Step 1: length cap (cheapest possible bound) */
+  const char *eos = (const char *) memchr(s, '\0', MORI_IDENTIFIER_MAX);
+  if (eos == NULL) return -1;
+
+  /* Step 2: literal-prefix match */
+  const size_t lit_len = sizeof(MORI_PREFIX_LITERAL) - 1;
+  if ((size_t)(eos - s) < lit_len) return -1;
+  if (memcmp(s, MORI_PREFIX_LITERAL, lit_len) != 0) return -1;
+  const char *p = s + lit_len;
+
+  /* Step 3: variable-width random-part scan: hex+ '_' hex+. Each *p deref
+     is guarded by p < eos; each iteration advances p by 1; total work is
+     bounded by MORI_NAME_MAX via the (p - s) < name_out_size cap. */
+  const char *r = p;
+  while (p < eos && (size_t)(p - s) < name_out_size &&
+         ((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f')))
+    p++;
+  if (p == r) return -1;                /* empty first hex run */
+  if (p >= eos || *p != '_') return -1; /* missing separator */
+  p++;
+  r = p;
+  while (p < eos && (size_t)(p - s) < name_out_size &&
+         ((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f')))
+    p++;
+  if (p == r) return -1;                /* empty second hex run */
+
+  /* Step 4: copy prefix, dispatch on next byte */
+  size_t prefix_len = (size_t)(p - s);
+  if (prefix_len >= name_out_size) return -1;  /* prefix too long for buf */
+  memcpy(name_out, s, prefix_len);
+  name_out[prefix_len] = '\0';
+
+  if (p == eos) return 0;               /* prefix only */
+  if (*p != '[') return -1;
+  p++;
+
+  /* Step 5: path parse */
+  int count = 0;
+  while (1) {
+    /* First digit of token: must be 1-9 (rejects empty, leading zero,
+       junk, and '\0' since '\0' < '1') */
+    if (*p < '1' || *p > '9') return -1;
+    uint32_t val = (uint32_t)(*p - '0');
+    p++;
+    while (*p >= '0' && *p <= '9') {
+      uint32_t d = (uint32_t)(*p - '0');
+      if (val > (uint32_t) INT32_MAX / 10 ||
+          (val == (uint32_t) INT32_MAX / 10 &&
+           d > (uint32_t) INT32_MAX % 10))
+        return -1;
+      val = val * 10 + d;
+      p++;
+    }
+    if (count >= MORI_MAX_PATH) return -1;
+    path_out[count++] = (int32_t)(val - 1);  /* convert to 0-based */
+
+    if (*p == ',') { p++; continue; }
+    if (*p == ']') { p++; break; }
+    return -1;
+  }
+
+  if (p != eos) return -1;              /* trailing junk after ']' */
+  *path_len = count;
+  return 1;
 }
 
 // Generic finalizer for mori_owned_tag extptrs (vec / str / view) ------------
@@ -345,7 +489,8 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
  * Layout:
  *   data1 = extptr (tag = mori_owned_tag, addr = mori_list_view *)
  *           prot: parent extptr (shm_tag for root; parent view for sub-list)
- *   data2 = R_NilValue or cache VECSXP (length n, initialized to mori_tag)
+ *   data2 = R_NilValue or cache VECSXP (length n; R_NilValue slot = uncached
+ *           or NIL element — re-extracted on cache miss either way)
  *
  * MORL region layout (same whether root SHM or nested inside a parent):
  *   Bytes 0-3:   uint32_t magic (0x4D4F524C "MORL")
@@ -355,11 +500,13 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
  *   Byte 24+:    element directory (32 bytes per element)
  */
 
-/* keeper: parent extptr (shm_tag for root, owned_tag for sub-list).
-   Validates the MORL header before touching it so corrupt input errors
-   cleanly rather than SEGV. */
-static SEXP mori_make_list_view(unsigned char *base, int64_t region_size,
-                                int32_t index, SEXP keeper) {
+/* Validate a MORL region and return a freshly allocated owned-tag extptr
+   wrapping its mori_list_view. No ALTREP wrapper, no attribute restoration —
+   suitable for path-walk intermediates whose ALTLIST view is never observed.
+   keeper: parent extptr (shm_tag for root, owned_tag for sub-list).
+   Errors cleanly on corrupt input rather than SEGV. */
+static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
+                                  int32_t index, SEXP keeper) {
 
   if (region_size < 24)
     Rf_error("mori: nested list region too small");
@@ -388,12 +535,23 @@ static SEXP mori_make_list_view(unsigned char *base, int64_t region_size,
   v->n_elements = n;
   v->index = index;
 
-  SEXP ptr = PROTECT(R_MakeExternalPtr(v, mori_owned_tag, keeper));
+  SEXP ptr = R_MakeExternalPtr(v, mori_owned_tag, keeper);
   R_RegisterCFinalizerEx(ptr, mori_owned_finalizer, TRUE);
+  return ptr;
+}
+
+/* User-visible ALTLIST: validates header, allocates view, restores attrs. */
+static SEXP mori_make_list_view(unsigned char *base, int64_t region_size,
+                                int32_t index, SEXP keeper) {
+
+  SEXP ptr = PROTECT(mori_make_view_extptr(base, region_size, index, keeper));
 
   /* Cache is allocated lazily on first Elt access */
   SEXP result = PROTECT(R_new_altrep(mori_list_class, ptr, R_NilValue));
 
+  int64_t attrs_offset, attrs_size;
+  memcpy(&attrs_offset, base + 8, 8);
+  memcpy(&attrs_size, base + 16, 8);
   if (attrs_size > 0)
     mori_restore_attrs(result, base + (size_t) attrs_offset,
                        (size_t) attrs_size);
@@ -412,22 +570,26 @@ static SEXP mori_list_Elt(SEXP x, R_xlen_t i) {
   SEXP d1 = R_altrep_data1(x);
   mori_list_view *view = (mori_list_view *) R_ExternalPtrAddr(d1);
 
-  /* Lazy cache allocation */
+  /* Lazy cache allocation. Fresh VECSXP is naturally R_NilValue-filled,
+     which serves as the "uncached" sentinel — no init loop needed. We
+     don't cache results that are themselves R_NilValue: it's a singleton
+     (`mori_unwrap_element`'s only NIL-producing path returns R's one true
+     R_NilValue), so re-extracting on a cache miss preserves identity for
+     free without needing a separate sentinel. */
   SEXP cache = R_altrep_data2(x);
   if (cache == R_NilValue) {
     cache = PROTECT(Rf_allocVector(VECSXP, view->n_elements));
-    for (int32_t k = 0; k < view->n_elements; k++)
-      SET_VECTOR_ELT(cache, k, mori_tag);
     R_set_altrep_data2(x, cache);
     UNPROTECT(1);
   }
 
   SEXP cached = VECTOR_ELT(cache, i);
-  if (cached != mori_tag) return cached;
+  if (cached != R_NilValue) return cached;
 
   SEXP result = mori_unwrap_element(view->base, view->region_size,
                                     (int32_t) i, d1);
-  SET_VECTOR_ELT(cache, i, result);
+  if (result != R_NilValue)
+    SET_VECTOR_ELT(cache, i, result);
   return result;
 }
 
@@ -901,10 +1063,15 @@ static SEXP mori_dispatch_by_magic(SEXP shm_ptr, const char *err_name) {
            err_name != NULL ? err_name : "");
 }
 
+/* Forward declaration for the path-form branch below. */
+static SEXP mori_open_path_c(const char *name,
+                             const int32_t *path, int path_len);
+
 /* Open SHM by name, inspect magic, dispatch to appropriate wrapper.
-   Malformed input (wrong type/length, NA, or not a mori SHM name) returns
-   NULL silently. A well-formed name that fails to open or has unexpected
-   magic bytes errors with a specific message. */
+   Malformed input (wrong type/length, NA, or not a mori SHM identifier)
+   returns NULL silently. A well-formed identifier that fails to open or
+   has unexpected magic bytes errors with a specific message. Accepts both
+   bare prefix form (root) and bracketed path form (sub-object). */
 SEXP mori_shm_open_and_wrap(SEXP name) {
 
   if (TYPEOF(name) != STRSXP || XLENGTH(name) != 1)
@@ -912,18 +1079,27 @@ SEXP mori_shm_open_and_wrap(SEXP name) {
   SEXP nm_sxp = STRING_ELT(name, 0);
   if (nm_sxp == NA_STRING)
     return R_NilValue;
-  const char *nm = CHAR(nm_sxp);
-  if (!mori_is_shm_name(nm))
-    return R_NilValue;
+  const char *s = CHAR(nm_sxp);
 
-  mori_shm *shm = mori_shm_open_heap(nm);
-  if (!shm)
-    Rf_error("mori: shared memory region not found: '%s'", nm);
+  char shm_name[MORI_NAME_MAX];
+  int32_t path[MORI_MAX_PATH];
+  int path_len = 0;
+  int rc = mori_parse_identifier(s, shm_name, sizeof(shm_name),
+                                 path, &path_len);
+  if (rc < 0) return R_NilValue;        /* probe miss */
 
-  SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
-  SEXP result = mori_dispatch_by_magic(shm_ptr, nm);
-  UNPROTECT(1);
-  return result;
+  if (rc == 0) {
+    mori_shm *shm = mori_shm_open_heap(shm_name);
+    if (!shm)
+      Rf_error("mori: shared memory region not found: '%s'", shm_name);
+    SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
+    SEXP result = mori_dispatch_by_magic(shm_ptr, shm_name);
+    UNPROTECT(1);
+    return result;
+  }
+
+  /* Path form: 0-based indices, route through C-level core. */
+  return mori_open_path_c(shm_name, path, path_len);
 }
 
 SEXP mori_is_shared(SEXP x) {
@@ -935,64 +1111,37 @@ SEXP mori_is_shared(SEXP x) {
   );
 }
 
+/* Recover the leaf's per-element index from the ALTREP type. */
+static inline int32_t mori_index_of(SEXP x) {
+  void *addr = R_ExternalPtrAddr(R_altrep_data1(x));
+  switch (TYPEOF(x)) {
+  case VECSXP:  return ((mori_list_view *) addr)->index;
+  case STRSXP:  return ((mori_str *) addr)->index;
+  default:      return ((mori_vec *) addr)->index;
+  }
+}
+
 SEXP mori_shm_name(SEXP x) {
   if (!ALTREP(x)) return R_BlankScalarString;
   SEXP d1 = R_altrep_data1(x);
   if (TYPEOF(d1) != EXTPTRSXP ||
       R_ExternalPtrTag(d1) != mori_owned_tag)
     return R_BlankScalarString;
-  /* Walk keeper chain through owned-tag hops to the shm-tag terminus.
-     Zero hops for root/standalone; one or more for sub-lists and elements. */
-  SEXP hop = R_ExternalPtrProtected(d1);
-  while (TYPEOF(hop) == EXTPTRSXP &&
-         R_ExternalPtrTag(hop) == mori_owned_tag)
-    hop = R_ExternalPtrProtected(hop);
-  if (TYPEOF(hop) != EXTPTRSXP || R_ExternalPtrTag(hop) != mori_shm_tag)
+
+  char buf[MORI_FORMAT_BUFLEN];
+  if (mori_format_chain(R_ExternalPtrProtected(d1), mori_index_of(x),
+                        buf, sizeof(buf)) != 0)
     return R_BlankScalarString;
-  mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(hop);
-  return Rf_mkString(shm->name);
+  return Rf_mkString(buf);
 }
 
 // ALTREP serialization hooks --------------------------------------------------
 
-/* Walks the keeper chain through owned-tag view extptrs and returns
-   list(name, path) where path is an INTSXP of (collected indices +
-   leaf_index) in top-down order. The only legitimate R_NilValue return is
-   MORI_MAX_PATH overflow: any ALTREP holding this chain keeps every hop
-   (and the root shm->name) live, so other reachability guards are
-   unreachable. */
-#define MORI_MAX_PATH 64
-
-static SEXP mori_build_path(SEXP keeper_extptr, int32_t leaf_index) {
-
-  int32_t collected[MORI_MAX_PATH];
-  int n_collected = 0;
-
-  SEXP hop = keeper_extptr;
-  while (R_ExternalPtrTag(hop) == mori_owned_tag) {
-    mori_list_view *view = (mori_list_view *) R_ExternalPtrAddr(hop);
-    if (view->index >= 0) {
-      if (n_collected >= MORI_MAX_PATH) return R_NilValue;
-      collected[n_collected++] = view->index;
-    }
-    hop = R_ExternalPtrProtected(hop);
-  }
-
-  mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(hop);
-
-  SEXP path = PROTECT(Rf_allocVector(INTSXP, n_collected + 1));
-  int *pp = INTEGER(path);
-  for (int i = 0; i < n_collected; i++)
-    pp[i] = collected[n_collected - 1 - i];
-  pp[n_collected] = leaf_index;
-
-  SEXP state = PROTECT(Rf_allocVector(VECSXP, 2));
-  SET_VECTOR_ELT(state, 0, Rf_mkString(shm->name));
-  SET_VECTOR_ELT(state, 1, path);
-
-  UNPROTECT(2);
-  return state;
-}
+/* All three Serialized_state methods emit the same string form as
+   mori_shm_name (the .Call): bare prefix for root standalones, prefix +
+   bracketed 1-based path for sub-objects. mori_format_chain is the single
+   source of truth shared with mori_shm_name. On overflow / malformed
+   chain, fall back to materialization. */
 
 static SEXP mori_vec_Serialized_state(SEXP x) {
   SEXP data2 = R_altrep_data2(x);
@@ -1001,17 +1150,12 @@ static SEXP mori_vec_Serialized_state(SEXP x) {
   SEXP data1 = R_altrep_data1(x);
   mori_vec *v = (mori_vec *) R_ExternalPtrAddr(data1);
 
-  if (v->index == -1) {
-    /* Standalone: prot is shm extptr by construction; name is live. */
-    mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(R_ExternalPtrProtected(data1));
-    return Rf_mkString(shm->name);
-  }
+  char buf[MORI_FORMAT_BUFLEN];
+  if (mori_format_chain(R_ExternalPtrProtected(data1), v->index,
+                        buf, sizeof(buf)) == 0)
+    return Rf_mkString(buf);
 
-  /* Element: walk keeper chain to build (name, path). */
-  SEXP state = mori_build_path(R_ExternalPtrProtected(data1), v->index);
-  if (state != R_NilValue) return state;
-
-  /* Only reachable when nesting depth exceeds MORI_MAX_PATH: materialize. */
+  /* Overflow / malformed chain: materialize. */
   R_xlen_t n = v->length;
   int type = TYPEOF(x);
   SEXP mat = PROTECT(Rf_allocVector(type, n));
@@ -1027,17 +1171,12 @@ static SEXP mori_string_Serialized_state(SEXP x) {
   SEXP data1 = R_altrep_data1(x);
   mori_str *s = (mori_str *) R_ExternalPtrAddr(data1);
 
-  if (s->index == -1) {
-    /* Standalone: prot is shm extptr by construction; name is live. */
-    mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(R_ExternalPtrProtected(data1));
-    return Rf_mkString(shm->name);
-  }
+  char buf[MORI_FORMAT_BUFLEN];
+  if (mori_format_chain(R_ExternalPtrProtected(data1), s->index,
+                        buf, sizeof(buf)) == 0)
+    return Rf_mkString(buf);
 
-  /* Element: walk keeper chain to build (name, path). */
-  SEXP state = mori_build_path(R_ExternalPtrProtected(data1), s->index);
-  if (state != R_NilValue) return state;
-
-  /* Only reachable when nesting depth exceeds MORI_MAX_PATH: materialize. */
+  /* Overflow / malformed chain: materialize. */
   R_xlen_t n = s->length;
   SEXP mat = PROTECT(Rf_allocVector(STRSXP, n));
   for (R_xlen_t i = 0; i < n; i++)
@@ -1054,22 +1193,12 @@ static SEXP mori_list_Serialized_state(SEXP x) {
   mori_list_view *view = (mori_list_view *) R_ExternalPtrAddr(data1);
   if (view == NULL) return Rf_allocVector(VECSXP, 0);
 
-  if (view->index == -1) {
-    /* Root list: compact name scalar */
-    SEXP shm_ptr = R_ExternalPtrProtected(data1);
-    if (TYPEOF(shm_ptr) == EXTPTRSXP &&
-        R_ExternalPtrTag(shm_ptr) == mori_shm_tag) {
-      mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(shm_ptr);
-      if (shm != NULL && shm->name[0] != '\0')
-        return Rf_mkString(shm->name);
-    }
-  } else {
-    /* Sub-list: build (name, path) */
-    SEXP state = mori_build_path(R_ExternalPtrProtected(data1), view->index);
-    if (state != R_NilValue) return state;
-  }
+  char buf[MORI_FORMAT_BUFLEN];
+  if (mori_format_chain(R_ExternalPtrProtected(data1), view->index,
+                        buf, sizeof(buf)) == 0)
+    return Rf_mkString(buf);
 
-  /* Fallback: materialize */
+  /* Overflow / malformed chain: materialize. */
   R_xlen_t n = view->n_elements;
   SEXP mat = PROTECT(Rf_allocVector(VECSXP, n));
   for (R_xlen_t i = 0; i < n; i++)
@@ -1080,15 +1209,14 @@ static SEXP mori_list_Serialized_state(SEXP x) {
 }
 
 /* Open parent SHM and walk the path, returning the leaf element.
-   path is an INTSXP of length >= 1. Intermediate steps must be VECSXP
-   children (nested MORL regions); the final step is the leaf. */
-static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
+   path has length >= 1. Intermediate steps must be VECSXP children
+   (nested MORL regions); the final step is the leaf. */
+static SEXP mori_open_path_c(const char *name,
+                             const int32_t *path, int path_len) {
 
-  const char *nm = CHAR(STRING_ELT(name, 0));
-
-  mori_shm *shm = mori_shm_open_heap(nm);
+  mori_shm *shm = mori_shm_open_heap(name);
   if (!shm)
-    Rf_error("mori: failed to open shared memory '%s'", nm);
+    Rf_error("mori: shared memory region not found: '%s'", name);
 
   SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
 
@@ -1097,9 +1225,6 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
   memcpy(&magic, base, 4);
   if (magic != 0x4D4F524Cu)
     Rf_error("mori: not a list region");  /* GC reclaims shm_ptr via longjmp */
-
-  int path_len = (int) XLENGTH(path_sxp);
-  const int *path = INTEGER(path_sxp);
 
   SEXP keeper = shm_ptr;
   unsigned char *cur_base = base;
@@ -1112,7 +1237,7 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
   PROTECT_WITH_INDEX(child, &child_idx);
 
   for (int k = 0; k < path_len - 1; k++) {
-    int idx = path[k];
+    int32_t idx = path[k];
     if (idx < 0 || idx >= cur_n)
       Rf_error("mori: path index out of bounds");
 
@@ -1129,17 +1254,20 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
         data_offset + data_size > cur_region_size)
       Rf_error("mori: nested region out of bounds");
 
-    REPROTECT(child = mori_make_list_view(
+    /* Bare extptr: no ALTLIST wrapper, no attr restore (intermediate is
+       never observed; only its index in the keeper chain matters). */
+    REPROTECT(child = mori_make_view_extptr(
       cur_base + data_offset, data_size, idx, keeper
     ), child_idx);
-    keeper = R_altrep_data1(child);
+    keeper = child;
 
-    cur_base = cur_base + data_offset;
-    cur_region_size = data_size;
-    memcpy(&cur_n, cur_base + 4, 4);
+    mori_list_view *cv = (mori_list_view *) R_ExternalPtrAddr(child);
+    cur_base = cv->base;
+    cur_region_size = cv->region_size;
+    cur_n = cv->n_elements;
   }
 
-  int leaf_idx = path[path_len - 1];
+  int32_t leaf_idx = path[path_len - 1];
   if (leaf_idx < 0 || leaf_idx >= cur_n)
     Rf_error("mori: leaf index out of bounds");
 
@@ -1151,21 +1279,21 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
 
 static SEXP mori_Unserialize(SEXP class_info, SEXP state) {
   (void) class_info;
-  /* Compact state: SHM name string → open and wrap (root) */
+  /* STRSXP state has two legitimate sources: an SHM identifier (root or
+     path-bearing) emitted by mori_*_Serialized_state, or a COW-materialized
+     ALTSTRING handed back as itself. mori_shm_open_and_wrap distinguishes
+     them by parse: parse success + region opens → opened ALTREP returned;
+     parse success + region missing → Rf_error propagates (correct: a
+     well-formed identifier whose region is gone is corruption, not user
+     data); parse failure → NULL, fall through to expanded-state handling
+     for the materialized-ALTSTRING case. The fallthrough is only for the
+     parse-failure branch — do not widen it to swallow errors from the
+     parse-success-but-missing-region branch. */
   if (TYPEOF(state) == STRSXP && XLENGTH(state) == 1 &&
-      STRING_ELT(state, 0) != NA_STRING &&
-      mori_is_shm_name(CHAR(STRING_ELT(state, 0))))
-    return mori_shm_open_and_wrap(state);
-  /* Path reference: list(name, int_path) where int_path has length >= 1.
-     Length 1 is wire-compatible with the previous (name, scalar_int) form. */
-  if (TYPEOF(state) == VECSXP && XLENGTH(state) == 2 &&
-      TYPEOF(VECTOR_ELT(state, 0)) == STRSXP &&
-      XLENGTH(VECTOR_ELT(state, 0)) == 1 &&
-      STRING_ELT(VECTOR_ELT(state, 0), 0) != NA_STRING &&
-      TYPEOF(VECTOR_ELT(state, 1)) == INTSXP &&
-      XLENGTH(VECTOR_ELT(state, 1)) >= 1 &&
-      mori_is_shm_name(CHAR(STRING_ELT(VECTOR_ELT(state, 0), 0))))
-    return mori_open_path(VECTOR_ELT(state, 0), VECTOR_ELT(state, 1));
+      STRING_ELT(state, 0) != NA_STRING) {
+    SEXP opened = mori_shm_open_and_wrap(state);
+    if (opened != R_NilValue) return opened;
+  }
   /* Expanded state: materialized data → return as-is
      (R restores ALTREP attributes separately) */
   return state;
@@ -1192,7 +1320,6 @@ static R_altrep_class_t mori_register_vec_class(mori_make_class_fn make,
 
 void mori_altrep_init(DllInfo *dll) {
 
-  mori_tag = Rf_install("mori");
   mori_shm_tag = Rf_install("mori_shm");
   mori_host_tag = Rf_install("mori_host");
   mori_owned_tag = Rf_install("mori_owned");
