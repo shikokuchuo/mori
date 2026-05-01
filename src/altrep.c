@@ -700,6 +700,19 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
   return cur;
 }
 
+/* Raise an R error for an SHM creation failure. rc > 0 means the kernel
+   reported the region could not be backed (typically /dev/shm full in a
+   container with the default 64 MB cap); other failures are generic. */
+static void mori_shm_create_failed(int rc) {
+  if (rc > 0)
+    Rf_error(
+      "mori:failed to create shared memory: out of space.\n"
+      "  Shared memory is provisioned at the OS or container level. In\n"
+      "  containers, raise it at start (e.g. `docker run --shm-size=2g ...`)."
+    );
+  Rf_error("mori:failed to create shared memory");
+}
+
 /* Write list/data frame to SHM (with transparent nested VECSXP) */
 static SEXP mori_shm_create_list_call(SEXP x) {
 
@@ -712,9 +725,9 @@ static SEXP mori_shm_create_list_call(SEXP x) {
 
   size_t total = mori_nested_size(x);
 
-  mori_shm *shm = mori_shm_create_heap(total);
-  if (!shm)
-    Rf_error("mori:failed to create shared memory");
+  mori_shm *shm;
+  int rc = mori_shm_create_heap(&shm, total);
+  if (rc != 0) mori_shm_create_failed(rc);
 
   mori_nested_write((unsigned char *) shm->addr, x);
 
@@ -734,9 +747,9 @@ static SEXP mori_shm_create_vector_call(SEXP x) {
   size_t attrs_size = (attrs != R_NilValue) ? mori_serialize_count(attrs) : 0;
   size_t total = 64 + data_size + attrs_size;
 
-  mori_shm *shm = mori_shm_create_heap(total);
-  if (!shm)
-    Rf_error("mori:failed to create shared memory");
+  mori_shm *shm;
+  int rc = mori_shm_create_heap(&shm, total);
+  if (rc != 0) mori_shm_create_failed(rc);
 
   unsigned char *base = (unsigned char *) shm->addr;
 
@@ -771,9 +784,9 @@ static SEXP mori_shm_create_string_call(SEXP x) {
   size_t attrs_size = (attrs != R_NilValue) ? mori_serialize_count(attrs) : 0;
   size_t total = header_size + str_size + attrs_size;
 
-  mori_shm *shm = mori_shm_create_heap(total);
-  if (!shm)
-    Rf_error("mori:failed to create shared memory");
+  mori_shm *shm;
+  int rc = mori_shm_create_heap(&shm, total);
+  if (rc != 0) mori_shm_create_failed(rc);
 
   unsigned char *base = (unsigned char *) shm->addr;
 
