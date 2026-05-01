@@ -137,14 +137,15 @@ int mori_shm_create(mori_shm *shm, size_t size) {
   }
 
 #ifdef __linux__
-  /* Reserve backing pages now: a too-small /dev/shm fails here with a
-     clean error instead of SIGBUS at write time. On tmpfs this is one
-     fallocate(2) syscall; pages get allocated and zeroed exactly once
-     either way (MAP_POPULATE would otherwise allocate them lazily). */
-  if (posix_fallocate(fd, 0, (off_t) size) != 0) {
+  /* Reserve tmpfs pages now: ftruncate leaves the file sparse and tmpfs
+     only allocates on write fault — SIGBUS if /dev/shm is full. (MAP_POPULATE
+     alone won't help: read prefault on a hole resolves to the shared zero
+     page without allocating.) posix_fallocate returns errno directly. */
+  int err = posix_fallocate(fd, 0, (off_t) size);
+  if (err != 0) {
     close(fd);
     mori_shm_os_unlink(shm->name);
-    return 1;
+    return err;
   }
 #endif
 
@@ -223,8 +224,8 @@ void mori_shm_close(mori_shm *shm, int unlink) {
 
 /* Malloc a mori_shm and create the SHM region into it. On success returns
    0 and writes the new region into *out; on failure leaks nothing, sets
-   *out to NULL, and returns the create status: 1 likely out of /dev/shm
-   space, -1 other failure. */
+   *out to NULL, and returns the create status: a positive errno from
+   posix_fallocate (e.g. ENOSPC), or -1 for other failures. */
 int mori_shm_create_heap(mori_shm **out, size_t size) {
   *out = NULL;
   mori_shm *shm = malloc(sizeof(mori_shm));
