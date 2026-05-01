@@ -48,6 +48,10 @@
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="development version" id="mori-development-version">mori (development version)<a class="anchor" aria-label="anchor" href="#mori-development-version"></a></h2>
 <ul><li>
+<code><a href="../reference/share.html">share()</a></code> on Linux fails with a clean R error when <code>/dev/shm</code> is too small (typical in containers, where the limit can be raised at start) instead of SIGBUS-ing mid-serialize (<a href="https://github.com/shikokuchuo/mori/issues/14" class="external-link">#14</a>).</li>
+<li>
+<code><a href="../reference/map_shared.html">map_shared()</a></code> on Linux no longer prefaults the whole region, restoring lazy first-touch access to match macOS.</li>
+<li>
 <code><a href="../reference/shared_name.html">shared_name()</a></code> returns the root SHM name for sub-lists and elements.</li>
 </ul></div>
     <div class="section level2">
