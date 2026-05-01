@@ -13,17 +13,20 @@ map_shared(name)
 
 - name:
 
-  a character string name identifying the shared memory region, as
-  returned by
-  [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md).
+  a character string identifier as returned by
+  [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md):
+  either a bare SHM region name (opens the root) or a region name with a
+  1-based bracketed index path (e.g. `"/mori_abc_1[2,3]"`, opens the
+  addressed sub-list or element directly).
 
 ## Value
 
-The R object stored in the shared memory region, or `NULL` if `name` is
-not a valid shared memory name (wrong type, length, `NA`, or missing the
-`mori` prefix). If `name` is well-formed but the region is absent or
-corrupted, an error is raised. The returned object is always the root of
-the region; sub-lists or elements are reached by indexing into it.
+The R object stored at the named region (or sub-object at the given
+path), or `NULL` if `name` is not a valid shared memory identifier
+(wrong type, length, `NA`, missing or malformed prefix, or malformed
+bracketed path). If `name` parses as a valid identifier but the region
+is absent or corrupted — or the path indexes out of bounds or through a
+non-list step — an error is raised.
 
 ## See also
 

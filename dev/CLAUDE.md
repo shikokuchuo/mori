@@ -14,14 +14,18 @@ ALTREP shared object,
 [`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md)
 → open SHM by name,
 [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md)
-→ extract SHM name,
+→ extract identifier,
 [`is_shared()`](https://shikokuchuo.net/mori/dev/reference/is_shared.md)
-→ test if shared. ALTREP serialization hooks let standalone shared
-objects serialize as the SHM name (~30 bytes) and ALTLIST elements /
-sub-lists as `(parent_name, integer_path)` — transparent under
-[`serialize()`](https://rdrr.io/r/base/serialize.html) and `mirai`.
-Nested VECSXP elements are zero-copy: each level is an inline
-self-describing MORL region inside the parent SHM.
+→ test if shared.
+[`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md)
+returns a path-bearing identifier of the form `<prefix>[i1,i2,...]` for
+sub-lists / elements (1-based) and the bare prefix for roots;
+[`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md)
+accepts both forms and round-trips the addressed object directly. ALTREP
+serialization hooks emit the same identifier as the wire form —
+transparent under [`serialize()`](https://rdrr.io/r/base/serialize.html)
+and `mirai`. Nested VECSXP elements are zero-copy: each level is an
+inline self-describing MORL region inside the parent SHM.
 
 ## Development Commands
 
@@ -69,9 +73,11 @@ devtools::document()
   [`is_shared()`](https://shikokuchuo.net/mori/dev/reference/is_shared.md)
   returns TRUE for sub-lists;
   [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md)
-  returns the root SHM name; `map_shared(shared_name(sub))` yields the
-  root, from which the sub-list or element can be re-accessed by
-  indexing.
+  returns the root SHM name plus a 1-based bracketed index path
+  (e.g. `/mori_abc_1[2,3]`); `map_shared(shared_name(sub))` opens the
+  addressed sub-list / element directly. The OS-level region name is the
+  prefix before `[` and is recoverable via
+  `sub("\\[.*$", "", shared_name(x))`.
 - **Pass-through**: All other R objects (environments, closures,
   language objects, NULL) are returned unchanged. No SHM is created.
 
@@ -127,9 +133,13 @@ Registered in `mori_altrep_init`. Numeric types — `mori_real`,
 `mori_integer`, `mori_logical`, `mori_raw`, `mori_complex` — share the
 `mori_vec` pattern with a SHM-backed data pointer. `mori_string` uses
 `mori_str` with lazy per-element access via `Elt` and `Rf_mkCharLenCE`.
-`mori_list` uses `mori_list_view` with a per-element directory and lazy
-`Elt` cache (sentinel `mori_tag` distinguishes uncached from cached
-`NULL`).
+`mori_list` uses `mori_list_view` with a per-element directory and a
+lazy `Elt` cache that uses `R_NilValue` as the “uncached” sentinel — a
+fresh VECSXP is naturally R_NilValue-filled, so cache init is zero work.
+NIL-valued elements are the sole singleton output of
+`mori_unwrap_element`’s fallback path, so they aren’t cached;
+re-extraction returns the same `R_NilValue` and identity is preserved
+for free.
 
 ### COW invariant for new ALTREP methods
 
@@ -144,34 +154,71 @@ SHM pointer otherwise.
 
 All classes register `Serialized_state` and `Unserialize`.
 
-- **Standalone shared objects** (from
-  [`share()`](https://shikokuchuo.net/mori/dev/reference/share.md) or
-  [`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md))
-  serialize as just the SHM name. On unserialize, `mori_Unserialize`
-  validates via `mori_is_shm_name()` (`/mori_` on POSIX, `Local\mori_`
-  on Windows), then `mori_shm_open_and_wrap` opens the SHM and wraps it.
-  R’s ALTREP framework restores attributes separately.
-- **Element vectors and sub-lists from ALTLIST** serialize as
-  `list(parent_name, int_path)` where `int_path` is INTSXP of length \>=
-  1 giving top-down indices from root to leaf (length 1 is
-  wire-identical to the previous scalar form — old blobs remain
-  readable). On unserialize, `mori_open_path` opens the root SHM, walks
-  each intermediate VECSXP directory via `mori_make_list_view`
-  (bounds-checking children against parents), and calls
-  `mori_unwrap_element` at the leaf.
+- **Identifier wire form (single canonical shape)**. `mori_format_chain`
+  is the single source of truth used by both `mori_shm_name` (the
+  `.Call`) and the three `Serialized_state` methods. It seeds a
+  stack-allocated `path[MORI_MAX_PATH]` from the rear with the leaf’s
+  index (when `>= 0`), then walks the keeper chain through
+  `mori_owned_tag` hops, prepending each `view->index` (`>= 0` only)
+  into the buffer — root→leaf order falls out in
+  `path[rear..MORI_MAX_PATH)` without a second pass. Formats `<prefix>`
+  (root) or `<prefix>[i1+1,...]` (sub-object) into a caller-provided 1
+  KB stack buffer using `shm->name_len` (cached at create/open time, no
+  per-call `strlen`). 1-based externalisation cues R’s `[[i]]`
+  semantics; the parser converts back to 0-based.
+- **Unserialize**. `mori_Unserialize` delegates STRSXP × 1 state to
+  `mori_shm_open_and_wrap`; on parse-success it returns the opened
+  ALTREP, on parse-failure it falls through to expanded-state handling
+  (the COW-materialized ALTSTRING case). `mori_shm_open_and_wrap` runs
+  `mori_parse_identifier`: prefix-only routes through magic-dispatch,
+  path form routes through `mori_open_path_c` (C-level core that walks
+  each intermediate VECSXP directory via `mori_make_view_extptr` — a
+  bare keeper-chain extptr with no ALTLIST wrapper and no attribute
+  restoration, since intermediates are never observed — bounds-checking
+  children against parents, and calls `mori_unwrap_element` at the leaf
+  where the full ALTLIST + attrs are constructed).
 
 Fallback to full materialization when: - COW-materialized vectors (data2
 is set) — returns the materialized copy. - Nesting depth exceeds
-`MORI_MAX_PATH` (64) in `mori_build_path`.
+`MORI_MAX_PATH` (64) in `mori_format_chain`.
+
+### Identifier grammar
+
+    identifier ::= prefix [ "[" int1 ("," int1)* "]" ]
+    prefix     ::= MORI_PREFIX_LITERAL hex+ "_" hex+
+    hex+       ::= [0-9a-f]+         # one or more, lowercase
+    int1       ::= [1-9][0-9]*       # 1-based, no leading zeros
+
+`MORI_PREFIX_LITERAL` (in `mori.h`) is `/mori_` (POSIX) / `Local\\mori_`
+(Windows) and is the **single source of truth shared between `shm.c`’s
+name-format strings** (`MORI_PREFIX_LITERAL "%x_%x"` POSIX,
+`MORI_PREFIX_LITERAL "%lx_%x"` Windows) and the parser’s literal
+`memcmp`. Change once; both sides stay in sync. Names are variable-width
+hex (no zero-padding); `MORI_NAME_MAX = 30` bounds the prefix on either
+platform (Windows worst case: `Local\\mori_<8hex>_<8hex>` = 28 chars +
+NUL).
+
+`mori_parse_identifier` is bounded and single-pass: `memchr` length cap
+(`MORI_IDENTIFIER_MAX`) → literal `memcmp` against `MORI_PREFIX_LITERAL`
+→ two bounded hex-digit run scans separated by `_` (each guarded by
+`p < eos`, each rejecting empty runs) → dispatch on the byte after the
+second run (`\0` for prefix-only, `[` for path) → comma-separated
+1-based indices with per-token `INT32_MAX` overflow check, terminated by
+`]`. Indices stored as 0-based. The path-parse loop relies on
+NUL-termination as a sentinel (every fail-branch’s predicate excludes
+`\0`), so trailing `p < eos` checks aren’t needed there. Sizing
+invariant:
+`MORI_NAME_MAX + 2 + 11 × MORI_MAX_PATH < MORI_FORMAT_BUFLEN`.
 
 ### Validation contract
 
-`map_shared` and unserialize share `mori_is_shm_name()` for shape
-validation but differ in failure mode: **malformed names → `NULL`**
-(wrong type/length, `NA`, missing prefix); **well-formed names that fail
-to map → error** (missing region, bad magic, truncated header). Preserve
-this split in `mori_shm_open_and_wrap`: collapsing it either way breaks
-the probe-vs-corruption distinction.
+`map_shared` and unserialize share `mori_parse_identifier` for shape
+validation but differ in failure mode: **malformed input → `NULL`**
+(wrong type/length, `NA`, missing or malformed prefix, malformed
+bracketed path); **well-formed identifier that fails to map → error**
+(missing region, bad magic, truncated header, OOB path index, non-VECSXP
+intermediate). Preserve this split in `mori_shm_open_and_wrap`:
+collapsing it either way breaks the probe-vs-corruption distinction.
 
 ## SHM Region Layouts
 
@@ -245,11 +292,8 @@ element’s `data_offset`; element-level attrs use the directory entry’s
 ## Internal State and Lifetime
 
 SHM lifetime is fully automatic via chained external pointer finalizers.
-Four interned symbols (C globals in `altrep.c`):
+Three interned symbols (C globals in `altrep.c`):
 
-- **`mori_tag`** (`Rf_install("mori")`) — ALTLIST cache sentinel only (a
-  VECSXP element marker, never an extptr tag). Distinguishes “not yet
-  accessed” from a cached `NULL` element.
 - **`mori_shm_tag`** (`Rf_install("mori_shm")`) — tags the SHM mapping
   extptr (host- and consumer-side). Addr is `mori_shm *`; finalizer:
   `munmap`.
@@ -257,17 +301,25 @@ Four interned symbols (C globals in `altrep.c`):
   unlink extptr created by `mori_make_result`. Addr is `mori_shm *`
   carrying `name` (POSIX) or `HANDLE` (Windows); finalizer: `shm_unlink`
   / `CloseHandle`. Sits above the shm terminus in the keeper chain.
-- **`mori_owned_tag`** (`Rf_install("mori_owned")`) — tags every mori
-  ALTREP’s `data1` extptr (view, vec, or str). Addr type recovered from
-  `TYPEOF(x)` at the ALTREP boundary: `VECSXP → mori_list_view *`,
-  `STRSXP → mori_str *`, else `mori_vec *`. Standalone-vs-element
-  carried in each struct’s `index` field (`-1` standalone/root, `>= 0`
-  element/sub-list); redundantly recoverable from `data1.prot`’s tag
-  (`shm_tag → standalone`, `owned_tag → element/sub-list`).
+- **`mori_owned_tag`** (`Rf_install("mori_owned")`) — tags every
+  malloc-backed extptr in the keeper chain: each mori ALTREP’s `data1`
+  extptr (view, vec, or str) **and** the bare keeper-chain extptrs
+  created by `mori_make_view_extptr` for path-walk intermediates (which
+  have no ALTREP wrapper but still hold a `mori_list_view *`). Addr type
+  for ALTREP data1 is recovered from `TYPEOF(x)` at the ALTREP boundary:
+  `VECSXP → mori_list_view *`, `STRSXP → mori_str *`, else `mori_vec *`.
+  Bare keeper-chain hops are always `mori_list_view *` (vec/str only
+  ever appear as leaves). Standalone-vs-element carried in each struct’s
+  `index` field (`-1` standalone/root, `>= 0` element/sub-list);
+  redundantly recoverable from `data1.prot`’s tag
+  (`shm_tag → standalone`, `owned_tag → element/sub-list`). Common
+  finalizer: `mori_owned_finalizer` `free`s the addr.
 
 [`is_shared()`](https://shikokuchuo.net/mori/dev/reference/is_shared.md)
-is a pointer comparison against `mori_owned_tag`. `mori_shm_name()` adds
-one `prot` hop and returns the name only when `prot`’s tag is `shm_tag`.
+is a pointer comparison against `mori_owned_tag`. `mori_shm_name()`
+invokes `mori_format_chain` to emit the bare prefix for roots /
+standalones and the path-bearing form (`<prefix>[i1,i2,...]`, 1-based)
+for sub-objects.
 
 ### Keeper chain
 
@@ -280,16 +332,21 @@ one `prot` hop and returns the name only when `prot`’s tag is `shm_tag`.
   is GC’d. `R_RegisterCFinalizerEx(..., TRUE)` covers session exit.
 - **Consumer side (`map_shared` / unserialize)**: `mori_shm_open` maps
   read-only (size via `fstat` / `VirtualQuery`); fd closed after mmap.
-  The shm extptr’s finalizer is `munmap` only — never unlink. For lists,
-  the shm extptr’s immediate child is a root view extptr
-  (`mori_list_view *`, index=-1) that becomes ALTREP data1; sub-lists
-  (index \>= 0) chain through their parent view extptr the same way.
-  Element vectors hold a `mori_vec` / `mori_str` extptr whose `prot` is
-  the immediate parent view (or the shm extptr for vec/str at the root).
+  The shm extptr’s finalizer is `munmap` only — never unlink. For lists
+  opened by prefix, the shm extptr’s immediate child is a root view
+  extptr (`mori_list_view *`, index=-1) that becomes ALTREP data1;
+  sub-lists accessed via `Elt` (index \>= 0) chain through their parent
+  view extptr the same way. For path-form
+  `map_shared("/mori_x_y[i,j,...]")`, intermediate hops are bare
+  keeper-chain extptrs (`mori_make_view_extptr`, no ALTLIST) — only the
+  leaf’s ALTREP exists. The chain shape is identical for
+  `mori_format_chain`’s purposes either way. Element vectors hold a
+  `mori_vec` / `mori_str` extptr whose `prot` is the immediate parent
+  view (or the shm extptr for vec/str at the root).
 - **Element lifetime**: leaves keep the root SHM alive through the chain
   (leaf → parent view(s) → shm extptr → host extptr). Every
   `R_MakeExternalPtr` retains its `prot`, so the chain survives even if
-  enclosing ALTLIST(s) are GC’d. `mori_build_path` is the only chain
+  enclosing ALTLIST(s) are GC’d. `mori_format_chain` is the only chain
   walker: it walks `mori_owned_tag` hops (always `mori_list_view *` —
   vec/str extptrs are only ever leaves), collecting view indices
   (skipping the root view’s -1) until it hits the shm extptr.
@@ -299,7 +356,9 @@ one `prot` hop and returns the name only when `prot`’s tag is `shm_tag`.
 ### src/
 
 - **mori.h** — types (`mori_shm`, `mori_buf`, `mori_vec` with `index`
-  field, `mori_list_view`), declarations, `MORI_ALIGN64`.
+  field, `mori_list_view`), declarations, `MORI_ALIGN64`, and the
+  identifier grammar constants (`MORI_NAME_MAX`, `MORI_MAX_PATH`,
+  `MORI_IDENTIFIER_MAX`, `MORI_FORMAT_BUFLEN`, `MORI_PREFIX_LITERAL`).
 - **shm.c** — platform SHM create/open/close + finalizers for both
   sides.
 - **serialize.c** — `mori_serialize_count`, `mori_serialize_into`,
@@ -307,9 +366,12 @@ one `prot` hop and returns the name only when `prot`’s tag is `shm_tag`.
   (non-zero-copy) ALTLIST entries where directory `sexptype == 0`.
 - **altrep.c** — all ALTREP class definitions, `mori_create` dispatcher,
   recursive writers (`mori_nested_size` / `mori_nested_write`), consumer
-  open+wrap (`mori_shm_open_and_wrap`), path open (`mori_open_path`),
-  identity/name (`mori_is_shared` / `mori_shm_name`), serialization
-  hooks, `mori_build_path`, `mori_altrep_init`.
+  open+wrap (`mori_shm_open_and_wrap`), path open (`mori_open_path_c`),
+  view constructors (`mori_make_view_extptr` for bare keeper-chain
+  extptrs, `mori_make_list_view` for full ALTLIST + attrs),
+  identity/name (`mori_is_shared` / `mori_shm_name`), identifier
+  formatter / parser (`mori_format_chain` / `mori_parse_identifier`),
+  serialization hooks, `mori_altrep_init`.
 - **init.c** — `R_init_mori`, `.Call` registration table (4 entries:
   `mori_create`, `mori_shm_open_and_wrap`, `mori_is_shared`,
   `mori_shm_name`).

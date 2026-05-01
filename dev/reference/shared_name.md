@@ -21,13 +21,14 @@ shared_name(x)
 
 ## Value
 
-A character string identifying the shared memory region, or the empty
-string `""` if `x` is not a shared object. For a sub-list or element
-extracted from a shared list, the name returned is the root region's
-name; mapping it via
+A character string identifying the shared object, or the empty string
+`""` if `x` is not a shared object. For a sub-list or element extracted
+from a shared list, the string carries a bracketed 1-based index path
+(e.g. `"/mori_abc_1[2,3]"`).
 [`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md)
-yields the root object, from which the sub-list or element can be
-re-accessed.
+accepts both forms; the path-bearing form returns the addressed
+sub-object directly. The OS-level SHM region name is the prefix before
+`[` and is recoverable via `sub("\\[.*$", "", shared_name(x))`.
 
 ## See also
 
@@ -39,5 +40,5 @@ to open a shared region by name.
 ``` r
 x <- share(rnorm(100))
 shared_name(x)
-#> [1] "/mori_1993_3"
+#> [1] "/mori_19a8_3"
 ```

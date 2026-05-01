@@ -68,11 +68,13 @@ passed to <code><a href="map_shared.html">map_shared()</a></code> to open the sa
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
-    <p>A character string identifying the shared memory region, or
-the empty string <code>""</code> if <code>x</code> is not a shared object. For a sub-list
-or element extracted from a shared list, the name returned is the
-root region's name; mapping it via <code><a href="map_shared.html">map_shared()</a></code> yields the root
-object, from which the sub-list or element can be re-accessed.</p>
+    <p>A character string identifying the shared object, or the empty
+string <code>""</code> if <code>x</code> is not a shared object. For a sub-list or element
+extracted from a shared list, the string carries a bracketed 1-based
+index path (e.g. <code>"/mori_abc_1[2,3]"</code>). <code><a href="map_shared.html">map_shared()</a></code> accepts both
+forms; the path-bearing form returns the addressed sub-object directly.
+The OS-level SHM region name is the prefix before <code>[</code> and is
+recoverable via <code>sub("\\[.*$", "", shared_name(x))</code>.</p>
     </div>
     <div class="section level2">
     <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a></h2>
@@ -83,7 +85,7 @@ object, from which the sub-list or element can be re-accessed.</p>
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="va">x</span> <span class="op">&lt;-</span> <span class="fu"><a href="share.html">share</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">100</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu">shared_name</span><span class="op">(</span><span class="va">x</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "/mori_1993_3"</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "/mori_19a8_3"</span>
 <span class="r-in"><span></span></span>
 </code></pre></div>
     </div>
