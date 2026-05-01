@@ -60,7 +60,7 @@ library(mori)
 # Share a vector — returns an ALTREP-backed object
 x <- share(rnorm(1e6))
 mean(x)
-#> [1] 0.0004578435
+#> [1] -0.00126693
 
 # Serialized form is ~100 bytes, not ~8 MB
 x |> serialize(NULL) |> length()
@@ -79,7 +79,7 @@ x <- share(1:1e6)
 # Extract the SHM name
 nm <- shared_name(x)
 nm
-#> [1] "/mori_8ebe_3"
+#> [1] "/mori_a44d_1"
 
 # Another process can map the same region by name
 y <- map_shared(nm)
@@ -105,7 +105,7 @@ x <- share(rnorm(1e6))
 m <- mirai(list(mean = mean(x), size = lobstr::obj_size(x)), x = x)
 m[]
 #> $mean
-#> [1] 0.0006073821
+#> [1] 8.510976e-06
 #> 
 #> $size
 #> 840 B
@@ -155,12 +155,12 @@ boot_mean <- \(i, data) colMeans(data[sample(nrow(data), replace = TRUE), ])
 # Without mori — each daemon deserializes a full copy
 mirai_map(1:8, boot_mean, .args = list(data = df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.665  13.228   8.525
+#>   0.671  13.785   8.459
 
 # With mori — each daemon maps the same shared memory
 mirai_map(1:8, boot_mean, .args = list(data = shared_df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.003   0.004   5.991
+#>   0.003   0.002   4.875
 
 daemons(0)
 ```

@@ -9,10 +9,11 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-static void mori_shm_name(char *name, size_t size) {
+static size_t mori_shm_name(char *name, size_t size) {
   static unsigned int counter = 0;
-  snprintf(name, size, MORI_PREFIX_LITERAL "%lx_%x",
-           (unsigned long) GetCurrentProcessId(), counter++);
+  int n = snprintf(name, size, MORI_PREFIX_LITERAL "%lx_%x",
+                   (unsigned long) GetCurrentProcessId(), counter++);
+  return (n > 0 && (size_t) n < size) ? (size_t) n : 0;
 }
 
 int mori_shm_create(mori_shm *shm, size_t size) {
@@ -20,7 +21,7 @@ int mori_shm_create(mori_shm *shm, size_t size) {
   shm->addr = NULL;
   shm->size = 0;
   shm->handle = NULL;
-  mori_shm_name(shm->name, sizeof(shm->name));
+  shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
 
   DWORD hi = (DWORD) ((uint64_t) size >> 32);
   DWORD lo = (DWORD) (size & 0xFFFFFFFF);
@@ -47,8 +48,11 @@ int mori_shm_open(mori_shm *shm, const char *name) {
   shm->addr = NULL;
   shm->size = 0;
   shm->handle = NULL;
-  strncpy(shm->name, name, sizeof(shm->name) - 1);
-  shm->name[sizeof(shm->name) - 1] = '\0';
+  size_t nl = strlen(name);
+  if (nl >= sizeof(shm->name)) nl = sizeof(shm->name) - 1;
+  memcpy(shm->name, name, nl);
+  shm->name[nl] = '\0';
+  shm->name_len = (uint8_t) nl;
 
   HANDLE h = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
   if (!h) return -1;
@@ -116,17 +120,18 @@ static int mori_shm_os_unlink(const char *name) {
 
 #endif
 
-static void mori_shm_name(char *name, size_t size) {
+static size_t mori_shm_name(char *name, size_t size) {
   static unsigned int counter = 0;
-  snprintf(name, size, MORI_PREFIX_LITERAL "%x_%x",
-           (unsigned) getpid(), counter++);
+  int n = snprintf(name, size, MORI_PREFIX_LITERAL "%x_%x",
+                   (unsigned) getpid(), counter++);
+  return (n > 0 && (size_t) n < size) ? (size_t) n : 0;
 }
 
 int mori_shm_create(mori_shm *shm, size_t size) {
 
   shm->addr = NULL;
   shm->size = 0;
-  mori_shm_name(shm->name, sizeof(shm->name));
+  shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
 
   int fd = mori_shm_os_open(shm->name, O_CREAT | O_EXCL | O_RDWR, 0600);
   if (fd < 0) return -1;
@@ -176,8 +181,11 @@ int mori_shm_open(mori_shm *shm, const char *name) {
 
   shm->addr = NULL;
   shm->size = 0;
-  strncpy(shm->name, name, sizeof(shm->name) - 1);
-  shm->name[sizeof(shm->name) - 1] = '\0';
+  size_t nl = strlen(name);
+  if (nl >= sizeof(shm->name)) nl = sizeof(shm->name) - 1;
+  memcpy(shm->name, name, nl);
+  shm->name[nl] = '\0';
+  shm->name_len = (uint8_t) nl;
 
   int fd = mori_shm_os_open(name, O_RDONLY, 0);
   if (fd < 0) return -1;
