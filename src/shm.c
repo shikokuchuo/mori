@@ -136,6 +136,19 @@ int mori_shm_create(mori_shm *shm, size_t size) {
     return -1;
   }
 
+#ifdef __linux__
+  /* Reserve tmpfs pages now: ftruncate leaves the file sparse and tmpfs
+     only allocates on write fault — SIGBUS if /dev/shm is full. (MAP_POPULATE
+     alone won't help: read prefault on a hole resolves to the shared zero
+     page without allocating.) posix_fallocate returns errno directly. */
+  int err = posix_fallocate(fd, 0, (off_t) size);
+  if (err != 0) {
+    close(fd);
+    mori_shm_os_unlink(shm->name);
+    return err;
+  }
+#endif
+
   void *addr = mmap(NULL, size, PROT_READ | PROT_WRITE,
                      MAP_SHARED | MAP_POPULATE, fd, 0);
   if (addr == MAP_FAILED) {
@@ -175,8 +188,11 @@ int mori_shm_open(mori_shm *shm, const char *name) {
   }
   size_t size = (size_t) st.st_size;
 
-  void *addr = mmap(NULL, size, PROT_READ,
-                     MAP_SHARED | MAP_POPULATE, fd, 0);
+  /* No MAP_POPULATE on the consumer: pages already exist (host wrote them),
+     so populating only installs PTEs eagerly across the whole region — which
+     defeats lazy access (a worker reading 1 of 10 list elements would prefault
+     the unread 9). Pages fault in on first touch instead. */
+  void *addr = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
   if (addr == MAP_FAILED) {
     close(fd);
     return -1;
@@ -206,16 +222,21 @@ void mori_shm_close(mori_shm *shm, int unlink) {
 
 // Platform-independent heap-allocating variants ------------------------------
 
-/* Malloc a mori_shm and create the SHM region into it. Returns NULL on
-   either allocation or create failure (in which case nothing is leaked). */
-mori_shm *mori_shm_create_heap(size_t size) {
+/* Malloc a mori_shm and create the SHM region into it. On success returns
+   0 and writes the new region into *out; on failure leaks nothing, sets
+   *out to NULL, and returns the create status: a positive errno from
+   posix_fallocate (e.g. ENOSPC), or -1 for other failures. */
+int mori_shm_create_heap(mori_shm **out, size_t size) {
+  *out = NULL;
   mori_shm *shm = malloc(sizeof(mori_shm));
-  if (!shm) return NULL;
-  if (mori_shm_create(shm, size) != 0) {
+  if (!shm) return -1;
+  int rc = mori_shm_create(shm, size);
+  if (rc != 0) {
     free(shm);
-    return NULL;
+    return rc;
   }
-  return shm;
+  *out = shm;
+  return 0;
 }
 
 /* Malloc a mori_shm and open an existing SHM region into it. */

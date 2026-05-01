@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdlib.h>
 #include "mori.h"
 
@@ -161,11 +162,11 @@ static SEXP mori_make_vector(const void *data, R_xlen_t length,
   case LGLSXP:   cls = mori_logical_class; break;
   case RAWSXP:   cls = mori_raw_class;     break;
   case CPLXSXP:  cls = mori_complex_class; break;
-  default:       Rf_error("mori:unsupported ALTREP type %d", sexptype);
+  default:       Rf_error("mori: unsupported ALTREP type %d", sexptype);
   }
 
   mori_vec *v = malloc(sizeof(mori_vec));
-  if (!v) Rf_error("mori:allocation failure");
+  if (!v) Rf_error("mori: allocation failure");
   v->data = data;
   v->length = length;
   v->index = -1;
@@ -265,7 +266,7 @@ static SEXP mori_make_string(const unsigned char *region_base,
                              R_xlen_t n, SEXP keeper) {
 
   mori_str *s = malloc(sizeof(mori_str));
-  if (!s) Rf_error("mori:allocation failure");
+  if (!s) Rf_error("mori: allocation failure");
 
   size_t table_size = 16 * (size_t) n;
   s->table = region_base;
@@ -303,9 +304,9 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
   /* Bounds-check the data region against the enclosing region */
   if (data_offset < 0 || data_size < 0 ||
       data_offset + data_size > region_size)
-    Rf_error("mori:element data out of bounds");
+    Rf_error("mori: element data out of bounds");
   if (attrs_size > 0 && attrs_size > data_size)
-    Rf_error("mori:element attrs size larger than data");
+    Rf_error("mori: element attrs size larger than data");
 
   SEXP result;
   if (sexptype == VECSXP) {
@@ -361,12 +362,12 @@ static SEXP mori_make_list_view(unsigned char *base, int64_t region_size,
                                 int32_t index, SEXP keeper) {
 
   if (region_size < 24)
-    Rf_error("mori:nested list region too small");
+    Rf_error("mori: nested list region too small");
 
   uint32_t magic;
   memcpy(&magic, base, 4);
   if (magic != 0x4D4F524Cu)
-    Rf_error("mori:invalid nested list magic bytes");
+    Rf_error("mori: invalid nested list magic bytes");
 
   int32_t n;
   int64_t attrs_offset, attrs_size;
@@ -375,13 +376,13 @@ static SEXP mori_make_list_view(unsigned char *base, int64_t region_size,
   memcpy(&attrs_size, base + 16, 8);
 
   if (n < 0 || (int64_t) 24 + (int64_t) 32 * n > region_size)
-    Rf_error("mori:nested list directory out of bounds");
+    Rf_error("mori: nested list directory out of bounds");
   if (attrs_offset < 0 || attrs_size < 0 ||
       attrs_offset + attrs_size > region_size)
-    Rf_error("mori:nested list attrs out of bounds");
+    Rf_error("mori: nested list attrs out of bounds");
 
   mori_list_view *v = malloc(sizeof(mori_list_view));
-  if (!v) Rf_error("mori:allocation failure");
+  if (!v) Rf_error("mori: allocation failure");
   v->base = base;
   v->region_size = region_size;
   v->n_elements = n;
@@ -480,7 +481,7 @@ static SEXP mori_shm_wrap_consumer(mori_shm *shm) {
 static SEXP mori_shm_wrap_producer(mori_shm *shm) {
 
   mori_shm *host = malloc(sizeof(mori_shm));
-  if (!host) Rf_error("mori:allocation failure");
+  if (!host) Rf_error("mori: allocation failure");
   memcpy(host, shm, sizeof(mori_shm));
   host->addr = NULL;
   host->size = 0;
@@ -700,6 +701,19 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
   return cur;
 }
 
+/* Raise an R error for an SHM creation failure. ENOSPC means the kernel
+   reported the region could not be backed (typically /dev/shm full in a
+   container with the default 64 MB cap); other failures are generic. */
+static void mori_shm_create_failed(int rc) {
+  if (rc == ENOSPC)
+    Rf_error(
+      "mori: failed to create shared memory: out of space.\n"
+      "  Shared memory is provisioned at the OS or container level. In\n"
+      "  containers, raise it at start (e.g. `docker run --shm-size=2g ...`)."
+    );
+  Rf_error("mori: failed to create shared memory");
+}
+
 /* Write list/data frame to SHM (with transparent nested VECSXP) */
 static SEXP mori_shm_create_list_call(SEXP x) {
 
@@ -712,9 +726,9 @@ static SEXP mori_shm_create_list_call(SEXP x) {
 
   size_t total = mori_nested_size(x);
 
-  mori_shm *shm = mori_shm_create_heap(total);
-  if (!shm)
-    Rf_error("mori:failed to create shared memory");
+  mori_shm *shm;
+  int rc = mori_shm_create_heap(&shm, total);
+  if (rc != 0) mori_shm_create_failed(rc);
 
   mori_nested_write((unsigned char *) shm->addr, x);
 
@@ -734,9 +748,9 @@ static SEXP mori_shm_create_vector_call(SEXP x) {
   size_t attrs_size = (attrs != R_NilValue) ? mori_serialize_count(attrs) : 0;
   size_t total = 64 + data_size + attrs_size;
 
-  mori_shm *shm = mori_shm_create_heap(total);
-  if (!shm)
-    Rf_error("mori:failed to create shared memory");
+  mori_shm *shm;
+  int rc = mori_shm_create_heap(&shm, total);
+  if (rc != 0) mori_shm_create_failed(rc);
 
   unsigned char *base = (unsigned char *) shm->addr;
 
@@ -771,9 +785,9 @@ static SEXP mori_shm_create_string_call(SEXP x) {
   size_t attrs_size = (attrs != R_NilValue) ? mori_serialize_count(attrs) : 0;
   size_t total = header_size + str_size + attrs_size;
 
-  mori_shm *shm = mori_shm_create_heap(total);
-  if (!shm)
-    Rf_error("mori:failed to create shared memory");
+  mori_shm *shm;
+  int rc = mori_shm_create_heap(&shm, total);
+  if (rc != 0) mori_shm_create_failed(rc);
 
   unsigned char *base = (unsigned char *) shm->addr;
 
@@ -883,7 +897,7 @@ static SEXP mori_dispatch_by_magic(SEXP shm_ptr, const char *err_name) {
   if (magic == 0x4D4F524Cu) return mori_open_list(shm_ptr);
   if (magic == 0x4D4F5248u) return mori_open_vector(shm_ptr);
   if (magic == 0x4D4F5253u) return mori_open_string(shm_ptr);
-  Rf_error("mori:invalid or corrupted shared memory region: '%s'",
+  Rf_error("mori: invalid or corrupted shared memory region: '%s'",
            err_name != NULL ? err_name : "");
 }
 
@@ -904,7 +918,7 @@ SEXP mori_shm_open_and_wrap(SEXP name) {
 
   mori_shm *shm = mori_shm_open_heap(nm);
   if (!shm)
-    Rf_error("mori:shared memory region not found: '%s'", nm);
+    Rf_error("mori: shared memory region not found: '%s'", nm);
 
   SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
   SEXP result = mori_dispatch_by_magic(shm_ptr, nm);
@@ -1074,7 +1088,7 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
 
   mori_shm *shm = mori_shm_open_heap(nm);
   if (!shm)
-    Rf_error("mori:failed to open shared memory '%s'", nm);
+    Rf_error("mori: failed to open shared memory '%s'", nm);
 
   SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
 
@@ -1082,7 +1096,7 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
   uint32_t magic;
   memcpy(&magic, base, 4);
   if (magic != 0x4D4F524Cu)
-    Rf_error("mori:not a list region");  /* GC reclaims shm_ptr via longjmp */
+    Rf_error("mori: not a list region");  /* GC reclaims shm_ptr via longjmp */
 
   int path_len = (int) XLENGTH(path_sxp);
   const int *path = INTEGER(path_sxp);
@@ -1100,7 +1114,7 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
   for (int k = 0; k < path_len - 1; k++) {
     int idx = path[k];
     if (idx < 0 || idx >= cur_n)
-      Rf_error("mori:path index out of bounds");
+      Rf_error("mori: path index out of bounds");
 
     unsigned char *dir = cur_base + 24 + 32 * (size_t) idx;
     int64_t data_offset, data_size;
@@ -1110,10 +1124,10 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
     memcpy(&sexptype, dir + 16, 4);
 
     if (sexptype != VECSXP)
-      Rf_error("mori:path step is not a nested list");
+      Rf_error("mori: path step is not a nested list");
     if (data_offset < 0 || data_size < 0 ||
         data_offset + data_size > cur_region_size)
-      Rf_error("mori:nested region out of bounds");
+      Rf_error("mori: nested region out of bounds");
 
     REPROTECT(child = mori_make_list_view(
       cur_base + data_offset, data_size, idx, keeper
@@ -1127,7 +1141,7 @@ static SEXP mori_open_path(SEXP name, SEXP path_sxp) {
 
   int leaf_idx = path[path_len - 1];
   if (leaf_idx < 0 || leaf_idx >= cur_n)
-    Rf_error("mori:leaf index out of bounds");
+    Rf_error("mori: leaf index out of bounds");
 
   SEXP result = mori_unwrap_element(cur_base, cur_region_size,
                                     leaf_idx, keeper);
