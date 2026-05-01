@@ -11,7 +11,7 @@
 
 static void mori_shm_name(char *name, size_t size) {
   static unsigned int counter = 0;
-  snprintf(name, size, "Local\\mori_%lx_%x",
+  snprintf(name, size, MORI_PREFIX_LITERAL "%lx_%x",
            (unsigned long) GetCurrentProcessId(), counter++);
 }
 
@@ -118,7 +118,8 @@ static int mori_shm_os_unlink(const char *name) {
 
 static void mori_shm_name(char *name, size_t size) {
   static unsigned int counter = 0;
-  snprintf(name, size, "/mori_%x_%x", (unsigned) getpid(), counter++);
+  snprintf(name, size, MORI_PREFIX_LITERAL "%x_%x",
+           (unsigned) getpid(), counter++);
 }
 
 int mori_shm_create(mori_shm *shm, size_t size) {

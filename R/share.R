@@ -61,15 +61,18 @@ share <- function(x) .Call(mori_create, x)
 #' Open a shared memory region identified by a name string and return an
 #' ALTREP-backed R object that reads directly from shared memory.
 #'
-#' @param name a character string name identifying the shared memory
-#'   region, as returned by [shared_name()].
+#' @param name a character string identifier as returned by
+#'   [shared_name()]: either a bare SHM region name (opens the root) or a
+#'   region name with a 1-based bracketed index path (e.g.
+#'   `"/mori_abc_1[2,3]"`, opens the addressed sub-list or element
+#'   directly).
 #'
-#' @return The R object stored in the shared memory region, or `NULL` if
-#'   `name` is not a valid shared memory name (wrong type, length, `NA`,
-#'   or missing the `mori` prefix). If `name` is well-formed but the
-#'   region is absent or corrupted, an error is raised. The returned
-#'   object is always the root of the region; sub-lists or elements
-#'   are reached by indexing into it.
+#' @return The R object stored at the named region (or sub-object at the
+#'   given path), or `NULL` if `name` is not a valid shared memory
+#'   identifier (wrong type, length, `NA`, missing or malformed prefix,
+#'   or malformed bracketed path). If `name` parses as a valid identifier
+#'   but the region is absent or corrupted — or the path indexes out of
+#'   bounds or through a non-list step — an error is raised.
 #'
 #' @examples
 #' x <- share(1:100)
@@ -107,11 +110,13 @@ is_shared <- function(x) .Call(mori_is_shared, x)
 #'
 #' @param x a shared object as returned by [share()] or [map_shared()].
 #'
-#' @return A character string identifying the shared memory region, or
-#'   the empty string `""` if `x` is not a shared object. For a sub-list
-#'   or element extracted from a shared list, the name returned is the
-#'   root region's name; mapping it via [map_shared()] yields the root
-#'   object, from which the sub-list or element can be re-accessed.
+#' @return A character string identifying the shared object, or the empty
+#'   string `""` if `x` is not a shared object. For a sub-list or element
+#'   extracted from a shared list, the string carries a bracketed 1-based
+#'   index path (e.g. `"/mori_abc_1[2,3]"`). [map_shared()] accepts both
+#'   forms; the path-bearing form returns the addressed sub-object directly.
+#'   The OS-level SHM region name is the prefix before `[` and is
+#'   recoverable via `sub("\\[.*$", "", shared_name(x))`.
 #'
 #' @examples
 #' x <- share(rnorm(100))

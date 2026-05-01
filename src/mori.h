@@ -8,12 +8,25 @@
 #include <stdint.h>
 #include <string.h>
 
+// Identifier grammar constants ------------------------------------------------
+
+#define MORI_NAME_MAX        48                /* size of mori_shm.name */
+#define MORI_MAX_PATH        64                /* max indices in a path */
+#define MORI_IDENTIFIER_MAX  1024              /* parser input length cap */
+#define MORI_FORMAT_BUFLEN   1024              /* formatter stack buffer */
+
+#ifdef _WIN32
+#define MORI_PREFIX_LITERAL  "Local\\mori_"
+#else
+#define MORI_PREFIX_LITERAL  "/mori_"
+#endif
+
 // Types -----------------------------------------------------------------------
 
 typedef struct mori_shm_s {
   void *addr;
   size_t size;
-  char name[48];
+  char name[MORI_NAME_MAX];
 #ifdef _WIN32
   void *handle;
 #endif

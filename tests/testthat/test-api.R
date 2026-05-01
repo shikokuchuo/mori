@@ -61,9 +61,9 @@ test_that("map_shared composes with shared_name sentinel without tryCatch", {
 
 test_that("well-formed name for absent region errors", {
   bogus <- if (.Platform$OS.type == "windows") {
-    "Local\\mori_nonexistent_xyz"
+    "Local\\mori_0_fffffff"
   } else {
-    "/mori_nonexistent_xyz"
+    "/mori_0_fffffff"
   }
   expect_error(map_shared(bogus), "not found")
 })
@@ -106,27 +106,114 @@ test_that("is_shared is TRUE across all shared ALTREP kinds (consumer-side)", {
   expect_true(is_shared(zz[[1]][["s"]]))
 })
 
-test_that("shared_name returns root SHM name for sub-lists and elements", {
+test_that("shared_name carries a bracketed path for sub-lists and elements", {
   x <- share(list(a = 1:5, sub = list(b = letters, c = 1:10)))
   nm <- shared_name(x)
   expect_gt(nchar(nm), 0L)
 
-  expect_identical(shared_name(x[[1]]), nm)
-  expect_identical(shared_name(x[["sub"]]), nm)
-  expect_identical(shared_name(x[["sub"]][["b"]]), nm)
-  expect_identical(shared_name(x[["sub"]][["c"]]), nm)
+  expect_identical(shared_name(x[[1]]),             paste0(nm, "[1]"))
+  expect_identical(shared_name(x[["sub"]]),         paste0(nm, "[2]"))
+  expect_identical(shared_name(x[["sub"]][["b"]]),  paste0(nm, "[2,1]"))
+  expect_identical(shared_name(x[["sub"]][["c"]]),  paste0(nm, "[2,2]"))
 
   y <- map_shared(nm)
-  expect_identical(shared_name(y[["sub"]]), nm)
-  expect_identical(shared_name(y[["sub"]][["b"]]), nm)
+  expect_identical(shared_name(y[["sub"]]),        paste0(nm, "[2]"))
+  expect_identical(shared_name(y[["sub"]][["b"]]), paste0(nm, "[2,1]"))
 })
 
-test_that("map_shared(shared_name(sub)) yields the root", {
+test_that("map_shared(shared_name(sub)) yields the addressed sub-object", {
   x <- share(list(outer = list(a = 1:5, b = letters)))
   sub <- x[["outer"]]
-  root <- map_shared(shared_name(sub))
-  expect_identical(root[["outer"]][["a"]][], 1:5)
-  expect_identical(root[["outer"]][["b"]][], letters)
+  reopened <- map_shared(shared_name(sub))
+  expect_identical(reopened[["a"]][], 1:5)
+  expect_identical(reopened[["b"]][], letters)
+})
+
+test_that("shared_name round-trips for any shared input", {
+  x <- share(list(a = 1:5, sub = list(b = letters, c = 1:10)))
+
+  # `[]` on an atomic ALTREP triggers materialization with well-defined
+  # semantics, but on an ALTLIST it's implementation-defined. Walk the
+  # structure element-wise and only use `[]` at atomic leaves so the
+  # round-trip check is unambiguous.
+  same_shape <- function(a, b) {
+    expect_identical(is.list(a), is.list(b))
+    if (is.list(a)) {
+      expect_identical(length(a), length(b))
+      expect_identical(names(a), names(b))
+      for (k in seq_along(a)) same_shape(a[[k]], b[[k]])
+    } else {
+      expect_identical(a[], b[])
+    }
+  }
+
+  for (sub in list(x, x[["a"]], x[["sub"]], x[["sub"]][["b"]],
+                   x[["sub"]][["c"]])) {
+    same_shape(map_shared(shared_name(sub)), sub)
+  }
+})
+
+test_that("OS name extractable from sub-object identifier", {
+  x <- share(list(a = 1:5))
+  os_name <- sub("\\[.*$", "", shared_name(x[[1]]))
+  expect_identical(os_name, shared_name(x))
+})
+
+test_that("shared_name round-trips at depth", {
+  x <- share(list(a = list(b = list(c = list(d = 1:5)))))
+  leaf <- x[["a"]][["b"]][["c"]][["d"]]
+  expect_match(shared_name(leaf), "\\[1,1,1,1\\]$")
+  expect_identical(map_shared(shared_name(leaf))[], 1:5)
+})
+
+test_that("map_shared rejects inputs that fail the prefix grammar", {
+  # All of these miss the prefix grammar; the path parser is unreachable.
+  expect_null(map_shared("not_a_mori_name"))         # literal mismatch
+  expect_null(map_shared("/mori_abc[1]"))            # missing _ separator
+  expect_null(map_shared("/mori_abc"))               # missing _ separator
+  expect_null(map_shared("/mori__abc"))              # empty first hex run
+  expect_null(map_shared("/mori_abc_"))              # empty second hex run
+  expect_null(map_shared("/mori_0_g"))               # non-hex in second run
+  expect_null(map_shared("/mori_0-1"))               # wrong separator
+  expect_null(map_shared("/mori_0_ABC"))             # uppercase in random part
+  expect_null(map_shared("/mori_0/1"))               # slash terminates run
+})
+
+test_that("map_shared rejects valid prefix with malformed path", {
+  good <- if (.Platform$OS.type == "windows") {
+    "Local\\mori_0_fffffff"
+  } else {
+    "/mori_0_fffffff"
+  }
+  expect_null(map_shared(paste0(good, "[]")))           # empty bracket
+  expect_null(map_shared(paste0(good, "[0]")))          # zero (1-based)
+  expect_null(map_shared(paste0(good, "[-1]")))         # negative
+  expect_null(map_shared(paste0(good, "[1,]")))         # trailing comma
+  expect_null(map_shared(paste0(good, "[,1]")))         # leading comma
+  expect_null(map_shared(paste0(good, "[1,,2]")))       # double comma
+  expect_null(map_shared(paste0(good, "[a]")))          # non-digit
+  expect_null(map_shared(paste0(good, "[01]")))         # leading zero
+  expect_null(map_shared(paste0(good, "[2147483648]"))) # exceeds INT32_MAX
+  expect_null(map_shared(paste0(good, "[1] ")))         # trailing space
+  expect_null(map_shared(paste0(good, "[1]x")))         # trailing junk
+  expect_null(map_shared(paste0(good, " [1]")))         # leading whitespace
+  expect_null(map_shared(paste0(good, "[")))            # unclosed bracket
+})
+
+test_that("map_shared errors on valid identifier with bad path", {
+  x <- share(list(a = 1:5))
+  nm <- shared_name(x)
+  expect_error(map_shared(paste0(nm, "[99]")), "out of bounds")
+})
+
+test_that("path-form on missing region yields the same 'not found' error", {
+  bogus <- if (.Platform$OS.type == "windows") {
+    "Local\\mori_0_fffffff"
+  } else {
+    "/mori_0_fffffff"
+  }
+  expect_error(map_shared(bogus),                "not found")
+  expect_error(map_shared(paste0(bogus, "[1]")), "not found")
 })
 
 test_that("share() is idempotent on already-shared objects", {

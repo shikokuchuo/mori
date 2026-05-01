@@ -60,7 +60,7 @@ library(mori)
 # Share a vector — returns an ALTREP-backed object
 x <- share(rnorm(1e6))
 mean(x)
-#> [1] 0.0005982035
+#> [1] 0.0004578435
 
 # Serialized form is ~100 bytes, not ~8 MB
 x |> serialize(NULL) |> length()
@@ -79,7 +79,7 @@ x <- share(1:1e6)
 # Extract the SHM name
 nm <- shared_name(x)
 nm
-#> [1] "/mori_4c0f_1"
+#> [1] "/mori_8ebe_3"
 
 # Another process can map the same region by name
 y <- map_shared(nm)
@@ -105,7 +105,7 @@ x <- share(rnorm(1e6))
 m <- mirai(list(mean = mean(x), size = lobstr::obj_size(x)), x = x)
 m[]
 #> $mean
-#> [1] 0.0008675476
+#> [1] 0.0006073821
 #> 
 #> $size
 #> 840 B
@@ -121,7 +121,7 @@ as the full data:
 daemons(3)
 
 # Share a list — all 3 vectors in a single shared region
-x <- list(a = rnorm(1e6), b = rnorm(1e6), c = rnorm(1e6)) |> share()
+x <- share(list(a = rnorm(1e6), b = rnorm(1e6), c = rnorm(1e6)))
 
 # Each element is sent as (parent_name, index) — zero-copy on the worker
 mirai_map(x, \(v) lobstr::obj_size(v) |> format())[.flat]
@@ -134,7 +134,7 @@ daemons(0)
 ## Why mori
 
 Parallel computing multiplies memory. When 8 workers each need the same
-210 MB dataset, that is 1.7 GB of serialization, transfer, and
+200 MB dataset, that is 1.6 GB of serialization, transfer, and
 deserialization — with 8 separate copies consuming RAM.
 
 mori eliminates all of it. `share()` writes data into shared memory
@@ -153,14 +153,14 @@ shared_df <- share(df)
 boot_mean <- \(i, data) colMeans(data[sample(nrow(data), replace = TRUE), ])
 
 # Without mori — each daemon deserializes a full copy
-mirai_map(1:8, boot_mean, data = df)[] |> system.time()
+mirai_map(1:8, boot_mean, .args = list(data = df))[] |> system.time()
 #>    user  system elapsed 
-#>   2.135  38.222   5.823
+#>   0.665  13.228   8.525
 
 # With mori — each daemon maps the same shared memory
-mirai_map(1:8, boot_mean, data = shared_df)[] |> system.time()
+mirai_map(1:8, boot_mean, .args = list(data = shared_df))[] |> system.time()
 #>    user  system elapsed 
-#>   1.377  27.121   3.949
+#>   0.003   0.004   5.991
 
 daemons(0)
 ```
