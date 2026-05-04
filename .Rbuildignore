@@ -10,6 +10,7 @@
 ^pkgdown$
 ^LICENSE\.md$
 ^codecov\.yml$
+^compile_commands\.json$
 ^CODE_OF_CONDUCT\.md$
 ^.*\.Rproj$
 ^cran-comments\.md$

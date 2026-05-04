@@ -22,8 +22,8 @@ Suggests:
     lobstr,
     mirai,
     testthat (>= 3.0.0)
+Config/build/compilation-database: true
+Config/roxygen2/markdown: TRUE
+Config/roxygen2/version: 8.0.0
 Config/testthat/edition: 3
 Encoding: UTF-8
-NeedsCompilation: yes
-Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
