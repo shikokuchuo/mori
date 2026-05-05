@@ -5,8 +5,6 @@
 
 <!-- badges: start -->
 
-[![Lifecycle:
-experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 [![CRAN
 status](https://www.r-pkg.org/badges/version/mori)](https://CRAN.R-project.org/package=mori)
 [![R-CMD-check](https://github.com/shikokuchuo/mori/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/shikokuchuo/mori/actions/workflows/R-CMD-check.yaml)
@@ -25,18 +23,14 @@ Shared Memory for R Objects
 → `share()` writes an R object into shared memory and returns a shared
 version
 
-→ ALTREP serialization hooks — shared objects serialize compactly and
-work transparently with `serialize()` and `mirai()`
+→ Compact ALTREP serialization — shared objects travel transparently
+through `serialize()` and `mirai()`
 
-→ ALTREP-backed lazy access — a 100-column data frame is one `mmap`;
-columns materialize on first touch
+→ Lazy access and automatic cleanup — read on demand; freed by R’s
+garbage collector
 
 → OS-level shared memory (POSIX / Win32) — pure C, no external
-dependencies; read-only in other processes, preventing corruption of
-shared data
-
-→ Automatic cleanup — shared memory is freed when the R object is
-garbage collected
+dependencies
 
 <br />
 
@@ -46,121 +40,109 @@ garbage collected
 install.packages("mori")
 ```
 
-## Quick Start
-
-`share()` writes an R object once into shared memory and returns a
-zero-copy ALTREP view. Shared objects serialize compactly via ALTREP
-serialization hooks, working transparently with mirai and any R
-serialization path. Shared memory is automatically freed when the object
-is garbage collected.
-
-``` r
-library(mori)
-
-# Share a vector — returns an ALTREP-backed object
-x <- share(rnorm(1e6))
-mean(x)
-#> [1] -0.00126693
-
-# Serialized form is ~100 bytes, not ~8 MB
-x |> serialize(NULL) |> length()
-#> [1] 124
-```
-
-## Sharing by Name
-
-`shared_name()` extracts the SHM name from a shared object.
-`map_shared()` opens a shared region by name — useful for accessing the
-same data from another process without serialization:
-
-``` r
-x <- share(1:1e6)
-
-# Extract the SHM name
-nm <- shared_name(x)
-nm
-#> [1] "/mori_a44d_1"
-
-# Another process can map the same region by name
-y <- map_shared(nm)
-identical(x[], y[])
-#> [1] TRUE
-```
-
-## Use with mirai
-
-Shared objects can be sent to local daemons — the ALTREP serialization
-hooks ensure only the SHM name crosses the wire, and the daemon maps the
-same physical memory.
-
-``` r
-library(lobstr)
-library(mirai)
-
-daemons(1)
-
-x <- share(rnorm(1e6))
-
-# Worker maps the same shared memory — 0 bytes copied
-m <- mirai(list(mean = mean(x), size = lobstr::obj_size(x)), x = x)
-m[]
-#> $mean
-#> [1] 8.510976e-06
-#> 
-#> $size
-#> 840 B
-
-daemons(0)
-```
-
-Elements of a shared list also serialize compactly — each element
-travels as a reference to its position in the parent shared region, not
-as the full data:
-
-``` r
-daemons(3)
-
-# Share a list — all 3 vectors in a single shared region
-x <- share(list(a = rnorm(1e6), b = rnorm(1e6), c = rnorm(1e6)))
-
-# Each element is sent as (parent_name, index) — zero-copy on the worker
-mirai_map(x, \(v) lobstr::obj_size(v) |> format())[.flat]
-#>       a       b       c 
-#> "840 B" "840 B" "840 B"
-
-daemons(0)
-```
-
 ## Why mori
 
 Parallel computing multiplies memory. When 8 workers each need the same
 200 MB dataset, that is 1.6 GB of serialization, transfer, and
 deserialization — with 8 separate copies consuming RAM.
 
-mori eliminates all of it. `share()` writes data into shared memory
-once. Each worker maps the same physical pages, receiving a reference of
-~300 bytes instead of the full dataset — a payload ~700,000 times
-smaller, which translates into a significant saving in memory usage as
-well as total runtime:
+`share()` writes the data into shared memory once and each worker maps
+the same physical pages — turning per-worker copies into per-worker
+references.
 
 ``` r
+library(mori)
+library(mirai)
+library(lobstr)
+
 daemons(8)
 
 # 200 MB data frame — 5 columns × 5M rows
 df <- as.data.frame(matrix(rnorm(25e6), ncol = 5))
 shared_df <- share(df)
+```
 
+Without mori, each worker holds the full data frame. With mori, each
+worker holds a small reference into the shared region:
+
+``` r
+mirai_map(1:8, \(i, data) format(lobstr::obj_size(data)),
+          .args = list(data = df))[.flat] |> unique()
+#> [1] "200.00 MB"
+
+mirai_map(1:8, \(i, data) format(lobstr::obj_size(data)),
+          .args = list(data = shared_df))[.flat] |> unique()
+#> [1] "824 B"
+```
+
+Avoiding 8 × 200 MB of serialize / deserialize also translates into a
+significant runtime saving:
+
+``` r
 boot_mean <- \(i, data) colMeans(data[sample(nrow(data), replace = TRUE), ])
 
 # Without mori — each daemon deserializes a full copy
 mirai_map(1:8, boot_mean, .args = list(data = df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.671  13.785   8.459
+#>   0.634  12.492   8.451
 
 # With mori — each daemon maps the same shared memory
 mirai_map(1:8, boot_mean, .args = list(data = shared_df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.003   0.002   4.875
+#>   0.002   0.004   4.768
+
+daemons(0)
+```
+
+## Usage
+
+Workers must run on the same machine — mori shares physical RAM, not
+bytes over a network.
+
+### Sharing by name
+
+`shared_name()` returns the SHM identifier of a shared object;
+`map_shared()` opens a region by that name — useful for handing a
+reference between processes without going through serialization:
+
+``` r
+x <- share(rnorm(1e6))
+
+shared_name(x)
+#> [1] "/mori_9636_1"
+
+# Another process — here the same one — can map the region by name
+y <- map_shared(shared_name(x))
+identical(x[], y[])
+#> [1] TRUE
+```
+
+### Sharing through serialization
+
+The ALTREP serialization hooks emit the same identifier on the wire, so
+the serialized form is a few bytes regardless of the data size:
+
+``` r
+length(serialize(x, NULL))
+#> [1] 124
+```
+
+This is transparent to any R serialization pathway — `mirai`,
+`parallel`, `callr`, and base R `serialize()` all carry shared objects
+as references rather than copies.
+
+Sub-elements of a shared list serialize as references too — each element
+travels as a path into the parent shared region, not as the full data:
+
+``` r
+daemons(3)
+
+# Share a list — all 3 vectors in a single shared region
+lst <- share(list(a = rnorm(1e6), b = rnorm(1e6), c = rnorm(1e6)))
+
+# Each element arrives on the worker as a zero-copy reference
+mirai_map(lst, \(v) format(lobstr::obj_size(v)))[.flat] |> unique()
+#> [1] "840 B"
 
 daemons(0)
 ```
@@ -180,23 +162,33 @@ returned unchanged by `share()` — no shared memory region is created.
 <figure>
 <img src="man/figures/mori-diagram.svg"
 alt="Diagram showing share() writing an object once into OS-backed shared memory, which is then memory-mapped by other processes using zero-copy ALTREP wrappers" />
-<figcaption aria-hidden="true">Diagram showing share() writing an object
-once into OS-backed shared memory, which is then memory-mapped by other
-processes using zero-copy ALTREP wrappers</figcaption>
+<figcaption aria-hidden="true">Diagram showing <code>share()</code>
+writing an object once into OS-backed shared memory, which is then
+memory-mapped by other processes using zero-copy ALTREP
+wrappers</figcaption>
 </figure>
 
 ### Lazy access
 
-A data frame with 10 columns lives in a single shared region. A task
-that touches 3 columns pays for 3. Character strings are accessed lazily
-per element.
+A data frame lives in a single shared region; columns are read on
+demand, so a worker that needs 3 of 100 columns only loads 3. Character
+strings are accessed lazily per element.
+
+``` r
+df <- share(as.data.frame(matrix(rnorm(1e7), ncol = 100)))
+shared_name(df)        # one region for all 100 columns
+#> [1] "/mori_9636_3"
+shared_name(df[[50]])  # sub-path into the same region
+#> [1] "/mori_9636_3[50]"
+```
 
 ### Lifetime
 
 Shared memory is managed by R’s garbage collector. The SHM region stays
-alive as long as the shared object (or any element extracted from it) is
-referenced in R. When no references remain, the garbage collector frees
-the shared memory automatically.
+alive as long as any shared object backed by it remains referenced in R
+— the original returned by `share()`, or a column or sub-list extracted
+from it, in this or another process. When no references remain, the
+garbage collector frees the shared memory automatically.
 
 **Important:** Always assign the result of `share()` to a variable. The
 shared memory is kept alive by the R object reference — if the result is
@@ -205,9 +197,9 @@ shared memory before a consumer process has mapped it.
 
 ### Copy-on-write
 
-Shared data is mapped read-only. Mutations are always local — R’s
-copy-on-write mechanism ensures other processes continue reading the
-original shared data:
+Shared data is mapped read-only, preventing corruption of the shared
+region. Mutations are always local — R’s copy-on-write mechanism ensures
+other processes continue reading the original shared data:
 
 - **Structural changes** to a list or data frame (adding, removing, or
   reordering elements) produce a regular R list. The shared region is
