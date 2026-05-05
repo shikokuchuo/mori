@@ -4,7 +4,8 @@ output: github_document
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-```{r, include = FALSE}
+```{r}
+#| include: false
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
@@ -55,7 +56,8 @@ install.packages("mori")
 Shared objects serialize compactly via ALTREP serialization hooks, working transparently with mirai and any R serialization path.
 Shared memory is automatically freed when the object is garbage collected.
 
-```{r quickstart}
+```{r}
+#| label: quick-start
 library(mori)
 
 # Share a vector — returns an ALTREP-backed object
@@ -63,7 +65,7 @@ x <- share(rnorm(1e6))
 mean(x)
 
 # Serialized form is ~100 bytes, not ~8 MB
-x |> serialize(NULL) |> length()
+length(serialize(x, NULL))
 ```
 
 ## Sharing by Name
@@ -71,7 +73,8 @@ x |> serialize(NULL) |> length()
 `shared_name()` extracts the SHM name from a shared object.
 `map_shared()` opens a shared region by name — useful for accessing the same data from another process without serialization:
 
-```{r byname}
+```{r}
+#| label: by-name
 x <- share(1:1e6)
 
 # Extract the SHM name
@@ -87,7 +90,8 @@ identical(x[], y[])
 
 Shared objects can be sent to local daemons — the ALTREP serialization hooks ensure only the SHM name crosses the wire, and the daemon maps the same physical memory.
 
-```{r mirai}
+```{r}
+#| label: mirai
 library(lobstr)
 library(mirai)
 
@@ -104,14 +108,15 @@ daemons(0)
 
 Elements of a shared list also serialize compactly — each element travels as a reference to its position in the parent shared region, not as the full data:
 
-```{r mirai_map}
+```{r}
+#| label: mirai-map
 daemons(3)
 
 # Share a list — all 3 vectors in a single shared region
 x <- share(list(a = rnorm(1e6), b = rnorm(1e6), c = rnorm(1e6)))
 
 # Each element is sent as (parent_name, index) — zero-copy on the worker
-mirai_map(x, \(v) lobstr::obj_size(v) |> format())[.flat]
+mirai_map(x, \(v) format(lobstr::obj_size(v)))[.flat]
 
 daemons(0)
 ```
@@ -126,7 +131,8 @@ mori eliminates all of it.
 `share()` writes data into shared memory once.
 Each worker maps the same physical pages, receiving a reference of ~300 bytes instead of the full dataset — a payload ~700,000 times smaller, which translates into a significant saving in memory usage as well as total runtime:
 
-```{r bench}
+```{r}
+#| label: bench
 daemons(8)
 
 # 200 MB data frame — 5 columns × 5M rows

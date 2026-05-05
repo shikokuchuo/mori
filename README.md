@@ -63,7 +63,7 @@ mean(x)
 #> [1] -0.00126693
 
 # Serialized form is ~100 bytes, not ~8 MB
-x |> serialize(NULL) |> length()
+length(serialize(x, NULL))
 #> [1] 124
 ```
 
@@ -79,7 +79,7 @@ x <- share(1:1e6)
 # Extract the SHM name
 nm <- shared_name(x)
 nm
-#> [1] "/mori_a44d_1"
+#> [1] "/mori_4c66_1"
 
 # Another process can map the same region by name
 y <- map_shared(nm)
@@ -105,7 +105,7 @@ x <- share(rnorm(1e6))
 m <- mirai(list(mean = mean(x), size = lobstr::obj_size(x)), x = x)
 m[]
 #> $mean
-#> [1] 8.510976e-06
+#> [1] -0.0004251411
 #> 
 #> $size
 #> 840 B
@@ -124,7 +124,7 @@ daemons(3)
 x <- share(list(a = rnorm(1e6), b = rnorm(1e6), c = rnorm(1e6)))
 
 # Each element is sent as (parent_name, index) — zero-copy on the worker
-mirai_map(x, \(v) lobstr::obj_size(v) |> format())[.flat]
+mirai_map(x, \(v) format(lobstr::obj_size(v)))[.flat]
 #>       a       b       c 
 #> "840 B" "840 B" "840 B"
 
