@@ -5,8 +5,6 @@
 
 <!-- badges: start -->
 
-[![Lifecycle:
-experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 [![CRAN
 status](https://www.r-pkg.org/badges/version/mori)](https://CRAN.R-project.org/package=mori)
 [![R-CMD-check](https://github.com/shikokuchuo/mori/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/shikokuchuo/mori/actions/workflows/R-CMD-check.yaml)
@@ -40,6 +38,60 @@ garbage collected
 
 <br />
 
+## Why mori
+
+Parallel computing multiplies memory. When 8 workers each need the same
+200 MB dataset, that is 1.6 GB of serialization, transfer, and
+deserialization — with 8 separate copies consuming RAM.
+
+`share()` writes the data into shared memory once and each worker maps
+the same physical pages — turning per-worker copies into per-worker
+references.
+
+``` r
+library(mori)
+library(mirai)
+library(lobstr)
+
+daemons(8)
+
+# 200 MB data frame — 5 columns × 5M rows
+df <- as.data.frame(matrix(rnorm(25e6), ncol = 5))
+shared_df <- share(df)
+```
+
+Without mori, each worker holds the full data frame. With mori, each
+worker holds a small reference into the shared region:
+
+``` r
+mirai_map(1:8, \(i, data) format(lobstr::obj_size(data)),
+          .args = list(data = df))[.flat] |> unique()
+#> [1] "200.00 MB"
+
+mirai_map(1:8, \(i, data) format(lobstr::obj_size(data)),
+          .args = list(data = shared_df))[.flat] |> unique()
+#> [1] "824 B"
+```
+
+Avoiding 8 × 200 MB of serialize / deserialize also translates into a
+significant runtime saving:
+
+``` r
+boot_mean <- \(i, data) colMeans(data[sample(nrow(data), replace = TRUE), ])
+
+# Without mori — each daemon deserializes a full copy
+mirai_map(1:8, boot_mean, .args = list(data = df))[] |> system.time()
+#>    user  system elapsed 
+#>   0.649  13.662   8.442
+
+# With mori — each daemon maps the same shared memory
+mirai_map(1:8, boot_mean, .args = list(data = shared_df))[] |> system.time()
+#>    user  system elapsed 
+#>   0.002   0.004   4.688
+
+daemons(0)
+```
+
 ## Installation
 
 ``` r
@@ -60,7 +112,7 @@ library(mori)
 # Share a vector — returns an ALTREP-backed object
 x <- share(rnorm(1e6))
 mean(x)
-#> [1] -0.00126693
+#> [1] -0.0006004896
 
 # Serialized form is ~100 bytes, not ~8 MB
 length(serialize(x, NULL))
@@ -79,7 +131,7 @@ x <- share(1:1e6)
 # Extract the SHM name
 nm <- shared_name(x)
 nm
-#> [1] "/mori_4c66_1"
+#> [1] "/mori_7a39_8"
 
 # Another process can map the same region by name
 y <- map_shared(nm)
@@ -93,6 +145,9 @@ Shared objects can be sent to local daemons — the ALTREP serialization
 hooks ensure only the SHM name crosses the wire, and the daemon maps the
 same physical memory.
 
+> Workers must run on the same machine — mori shares physical RAM, not
+> bytes over a network.
+
 ``` r
 library(lobstr)
 library(mirai)
@@ -105,7 +160,7 @@ x <- share(rnorm(1e6))
 m <- mirai(list(mean = mean(x), size = lobstr::obj_size(x)), x = x)
 m[]
 #> $mean
-#> [1] -0.0004251411
+#> [1] -0.001750826
 #> 
 #> $size
 #> 840 B
@@ -124,43 +179,8 @@ daemons(3)
 x <- share(list(a = rnorm(1e6), b = rnorm(1e6), c = rnorm(1e6)))
 
 # Each element is sent as (parent_name, index) — zero-copy on the worker
-mirai_map(x, \(v) format(lobstr::obj_size(v)))[.flat]
-#>       a       b       c 
-#> "840 B" "840 B" "840 B"
-
-daemons(0)
-```
-
-## Why mori
-
-Parallel computing multiplies memory. When 8 workers each need the same
-200 MB dataset, that is 1.6 GB of serialization, transfer, and
-deserialization — with 8 separate copies consuming RAM.
-
-mori eliminates all of it. `share()` writes data into shared memory
-once. Each worker maps the same physical pages, receiving a reference of
-~300 bytes instead of the full dataset — a payload ~700,000 times
-smaller, which translates into a significant saving in memory usage as
-well as total runtime:
-
-``` r
-daemons(8)
-
-# 200 MB data frame — 5 columns × 5M rows
-df <- as.data.frame(matrix(rnorm(25e6), ncol = 5))
-shared_df <- share(df)
-
-boot_mean <- \(i, data) colMeans(data[sample(nrow(data), replace = TRUE), ])
-
-# Without mori — each daemon deserializes a full copy
-mirai_map(1:8, boot_mean, .args = list(data = df))[] |> system.time()
-#>    user  system elapsed 
-#>   0.671  13.785   8.459
-
-# With mori — each daemon maps the same shared memory
-mirai_map(1:8, boot_mean, .args = list(data = shared_df))[] |> system.time()
-#>    user  system elapsed 
-#>   0.003   0.002   4.875
+mirai_map(x, \(v) format(lobstr::obj_size(v)))[.flat] |> unique()
+#> [1] "840 B"
 
 daemons(0)
 ```
@@ -187,16 +207,25 @@ processes using zero-copy ALTREP wrappers</figcaption>
 
 ### Lazy access
 
-A data frame with 10 columns lives in a single shared region. A task
-that touches 3 columns pays for 3. Character strings are accessed lazily
-per element.
+A data frame lives in a single shared region; columns are read on
+demand, so a worker that needs 3 of 100 columns only loads 3. Character
+strings are accessed lazily per element.
+
+``` r
+df <- share(as.data.frame(matrix(rnorm(1e7), ncol = 100)))
+shared_name(df)        # one region for all 100 columns
+#> [1] "/mori_7a39_b"
+shared_name(df[[50]])  # sub-path into the same region
+#> [1] "/mori_7a39_b[50]"
+```
 
 ### Lifetime
 
 Shared memory is managed by R’s garbage collector. The SHM region stays
-alive as long as the shared object (or any element extracted from it) is
-referenced in R. When no references remain, the garbage collector frees
-the shared memory automatically.
+alive as long as any shared object backed by it remains referenced in R
+— the original returned by `share()`, or a column or sub-list extracted
+from it, in this or another process. When no references remain, the
+garbage collector frees the shared memory automatically.
 
 **Important:** Always assign the result of `share()` to a variable. The
 shared memory is kept alive by the R object reference — if the result is
