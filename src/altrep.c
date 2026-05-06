@@ -25,6 +25,15 @@ typedef struct {
   int64_t length;
 } mori_elem;
 
+/* ALTSTRING offset table entry (16 bytes per string).
+   str_length < 0 sentinel means NA_STRING.
+   str_encoding is a cetype_t. */
+typedef struct {
+  int64_t str_offset;
+  int32_t str_length;
+  int32_t str_encoding;
+} mori_str_entry;
+
 // SHM eligibility: any atomic vector (attributes stored separately) ---------
 
 static inline int mori_shm_eligible(int type) {
@@ -356,17 +365,14 @@ typedef struct {
 } mori_str;
 
 static inline SEXP mori_string_elt_shm(mori_str *s, R_xlen_t i) {
-  const unsigned char *entry = s->table + 16 * (size_t) i;
-  int64_t str_offset;
-  int32_t str_length, str_encoding;
-  memcpy(&str_offset, entry, 8);
-  memcpy(&str_length, entry + 8, 4);
-  memcpy(&str_encoding, entry + 12, 4);
+  mori_str_entry e;
+  memcpy(&e, s->table + sizeof(mori_str_entry) * (size_t) i,
+         sizeof(mori_str_entry));
 
-  if (str_length < 0) return NA_STRING;
+  if (e.str_length < 0) return NA_STRING;
 
-  return Rf_mkCharLenCE((const char *) (s->data + str_offset),
-                        str_length, (cetype_t) str_encoding);
+  return Rf_mkCharLenCE((const char *) (s->data + e.str_offset),
+                        e.str_length, (cetype_t) e.str_encoding);
 }
 
 static R_xlen_t mori_string_Length(SEXP x) {
@@ -427,7 +433,7 @@ static SEXP mori_make_string(const unsigned char *region_base,
   mori_str *s = malloc(sizeof(mori_str));
   if (s == NULL) Rf_error("mori: allocation failure");
 
-  size_t table_size = 16 * (size_t) n;
+  size_t table_size = sizeof(mori_str_entry) * (size_t) n;
   s->table = region_base;
   s->data = region_base + MORI_ALIGN64(table_size);
   s->length = n;
@@ -690,7 +696,7 @@ static SEXP mori_make_result(mori_shm *shm) {
 /* Returns total bytes written (including alignment padding). */
 static size_t mori_write_strings(unsigned char *dest, SEXP x) {
   R_xlen_t n = XLENGTH(x);
-  size_t table_size = 16 * (size_t) n;
+  size_t table_size = sizeof(mori_str_entry) * (size_t) n;
   size_t data_start = MORI_ALIGN64(table_size);
 
   /* Zero-fill alignment gap */
@@ -700,24 +706,23 @@ static size_t mori_write_strings(unsigned char *dest, SEXP x) {
   size_t cur = 0;
   for (R_xlen_t i = 0; i < n; i++) {
     SEXP elt = STRING_ELT(x, i);
-    unsigned char *tbl = dest + 16 * (size_t) i;
+    unsigned char *tbl = dest + sizeof(mori_str_entry) * (size_t) i;
+    mori_str_entry e;
 
     if (elt == NA_STRING) {
-      int64_t off = 0;
-      int32_t len = -1, enc = 0;
-      memcpy(tbl, &off, 8);
-      memcpy(tbl + 8, &len, 4);
-      memcpy(tbl + 12, &enc, 4);
+      e.str_offset = 0;
+      e.str_length = -1;
+      e.str_encoding = 0;
     } else {
       int32_t slen = (int32_t) LENGTH(elt);
-      int64_t off = (int64_t) cur;
-      int32_t enc = (int32_t) Rf_getCharCE(elt);
-      memcpy(tbl, &off, 8);
-      memcpy(tbl + 8, &slen, 4);
-      memcpy(tbl + 12, &enc, 4);
+      e.str_offset = (int64_t) cur;
+      e.str_length = slen;
+      e.str_encoding = (int32_t) Rf_getCharCE(elt);
       memcpy(dest + data_start + cur, CHAR(elt), (size_t) slen);
       cur += (size_t) slen;
     }
+
+    memcpy(tbl, &e, sizeof(mori_str_entry));
   }
 
   return data_start + cur;
@@ -725,7 +730,7 @@ static size_t mori_write_strings(unsigned char *dest, SEXP x) {
 
 static size_t mori_string_data_size(SEXP x) {
   R_xlen_t n = XLENGTH(x);
-  size_t table_size = 16 * (size_t) n;
+  size_t table_size = sizeof(mori_str_entry) * (size_t) n;
   size_t str_bytes = 0;
   for (R_xlen_t i = 0; i < n; i++) {
     SEXP elt = STRING_ELT(x, i);
