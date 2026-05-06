@@ -249,7 +249,7 @@ static int mori_parse_identifier(const char *s,
 
 static void mori_owned_finalizer(SEXP ptr) {
   void *v = R_ExternalPtrAddr(ptr);
-  if (v) {
+  if (v != NULL) {
     free(v);
     R_ClearExternalPtr(ptr);
   }
@@ -321,7 +321,7 @@ static SEXP mori_make_vector(const void *data, R_xlen_t length,
   }
 
   mori_vec *v = malloc(sizeof(mori_vec));
-  if (!v) Rf_error("mori: allocation failure");
+  if (v == NULL) Rf_error("mori: allocation failure");
   v->data = data;
   v->length = length;
   v->index = -1;
@@ -425,7 +425,7 @@ static SEXP mori_make_string(const unsigned char *region_base,
                              R_xlen_t n, SEXP keeper) {
 
   mori_str *s = malloc(sizeof(mori_str));
-  if (!s) Rf_error("mori: allocation failure");
+  if (s == NULL) Rf_error("mori: allocation failure");
 
   size_t table_size = 16 * (size_t) n;
   s->table = region_base;
@@ -515,9 +515,14 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
    wrapping its mori_list_view. No ALTREP wrapper, no attribute restoration —
    suitable for path-walk intermediates whose ALTLIST view is never observed.
    keeper: parent extptr (shm_tag for root, owned_tag for sub-list).
+   out_attrs_offset / out_attrs_size: optional out-params (NULL to skip);
+   when non-NULL, populated with the validated attrs locator so the caller
+   can avoid re-reading the header.
    Errors cleanly on corrupt input rather than SEGV. */
 static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
-                                  int32_t index, SEXP keeper) {
+                                  int32_t index, SEXP keeper,
+                                  int64_t *out_attrs_offset,
+                                  int64_t *out_attrs_size) {
 
   if (region_size < 24)
     Rf_error("mori: invalid nested list region");
@@ -538,7 +543,7 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
     Rf_error("mori: invalid nested list region");
 
   mori_list_view *v = malloc(sizeof(mori_list_view));
-  if (!v) Rf_error("mori: allocation failure");
+  if (v == NULL) Rf_error("mori: allocation failure");
   v->base = base;
   v->region_size = region_size;
   v->n_elements = n;
@@ -546,6 +551,9 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
 
   SEXP ptr = R_MakeExternalPtr(v, mori_owned_tag, keeper);
   R_RegisterCFinalizerEx(ptr, mori_owned_finalizer, TRUE);
+
+  if (out_attrs_offset != NULL) *out_attrs_offset = attrs_offset;
+  if (out_attrs_size != NULL)   *out_attrs_size   = attrs_size;
   return ptr;
 }
 
@@ -553,14 +561,14 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
 static SEXP mori_make_list_view(unsigned char *base, int64_t region_size,
                                 int32_t index, SEXP keeper) {
 
-  SEXP ptr = PROTECT(mori_make_view_extptr(base, region_size, index, keeper));
+  int64_t attrs_offset, attrs_size;
+  SEXP ptr = PROTECT(mori_make_view_extptr(
+    base, region_size, index, keeper, &attrs_offset, &attrs_size
+  ));
 
   /* Cache is allocated lazily on first Elt access */
   SEXP result = PROTECT(R_new_altrep(mori_list_class, ptr, R_NilValue));
 
-  int64_t attrs_offset, attrs_size;
-  memcpy(&attrs_offset, base + 8, 8);
-  memcpy(&attrs_size, base + 16, 8);
   if (attrs_size > 0)
     mori_restore_attrs(result, base + (size_t) attrs_offset,
                        (size_t) attrs_size);
@@ -652,7 +660,7 @@ static SEXP mori_shm_wrap_consumer(mori_shm *shm) {
 static SEXP mori_shm_wrap_producer(mori_shm *shm) {
 
   mori_shm *host = malloc(sizeof(mori_shm));
-  if (!host) Rf_error("mori: allocation failure");
+  if (host == NULL) Rf_error("mori: allocation failure");
   memcpy(host, shm, sizeof(mori_shm));
   host->addr = NULL;
   host->size = 0;
@@ -1088,7 +1096,7 @@ SEXP mori_shm_open_and_wrap(SEXP name) {
 
   if (rc == 0) {
     mori_shm *shm = mori_shm_open_heap(shm_name);
-    if (!shm)
+    if (shm == NULL)
       Rf_error("mori: shared memory region not found: '%s'", shm_name);
     SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
     SEXP result = mori_dispatch_by_magic(shm_ptr, shm_name);
@@ -1213,14 +1221,14 @@ static SEXP mori_open_path_c(const char *name,
                              const int32_t *path, int path_len) {
 
   mori_shm *shm = mori_shm_open_heap(name);
-  if (!shm)
+  if (shm == NULL)
     Rf_error("mori: shared memory region not found: '%s'", name);
 
   SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
 
   /* Root view (index = -1): uniform chain shape with mori_open_list. */
   SEXP root_view = PROTECT(mori_make_view_extptr(
-    (unsigned char *) shm->addr, (int64_t) shm->size, -1, shm_ptr
+    (unsigned char *) shm->addr, (int64_t) shm->size, -1, shm_ptr, NULL, NULL
   ));
   mori_list_view *rv = (mori_list_view *) R_ExternalPtrAddr(root_view);
 
@@ -1252,7 +1260,7 @@ static SEXP mori_open_path_c(const char *name,
     /* Bare extptr: no ALTLIST wrapper, no attr restore (intermediate is
        never observed; only its index in the keeper chain matters). */
     REPROTECT(child = mori_make_view_extptr(
-      cur_base + data_offset, data_size, idx, keeper
+      cur_base + data_offset, data_size, idx, keeper, NULL, NULL
     ), child_idx);
     keeper = child;
 
