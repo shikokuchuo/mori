@@ -36,7 +36,7 @@ devtools::document()
 
 ## Storage Model
 
-- **Zero-copy (SHM-backed)**: All atomic vectors (any type, any attributes) and data frame columns are written directly into SHM and backed by ALTREP on consumers. Attributes serialize into a trailing region and restore via `SET_ATTRIB`. Numeric `Dataptr_or_null` returns the SHM pointer; `Dataptr(writable=TRUE)` triggers COW into a private copy. String `Elt` lazily creates CHARSXPs via `Rf_mkCharLenCE`; `Dataptr_or_null` returns NULL to force per-element access.
+- **Zero-copy (SHM-backed)**: All atomic vectors (any type, any attributes) and data frame columns are written directly into SHM and backed by ALTREP on consumers. Attributes serialize into a trailing region and are reapplied on the consumer. Numeric `Dataptr_or_null` returns the SHM pointer; `Dataptr(writable=TRUE)` triggers COW into a private copy. String `Elt` lazily creates CHARSXPs via `Rf_mkCharLenCE`; `Dataptr_or_null` returns NULL to force per-element access.
 - **Nested lists (zero-copy)**: VECSXP/LISTSXP elements of a shared list are written inline as a complete child MORL region at their `data_offset`; each level wraps in its own ALTLIST. `is_shared()` returns TRUE for sub-lists; `shared_name()` returns a path-bearing identifier; `map_shared(shared_name(sub))` opens the addressed sub-list / element directly. The OS-level region name is the prefix before `[` and is recoverable via `sub("\\[.*$", "", shared_name(x))`.
 - **Pass-through**: All other R objects (environments, closures, language objects, NULL) are returned unchanged. No SHM is created.
 
@@ -113,7 +113,7 @@ Magic identifier in the first 4 bytes: MORH (`0x4D4F5248`) atomic vector, MORL (
 | 64+ | | raw vector data |
 | 64 + length×elt_size | | serialized attributes (`attrs_size` bytes, if > 0) |
 
-Attributes are a serialized pairlist; `mori_restore_attrs` unserializes and applies via `SET_ATTRIB` on the consumer.
+Attributes are a serialized R object (pairlist on R < 4.6, named list otherwise); `mori_restore_attrs` unserializes and reapplies them on the consumer.
 
 **MORL — ALTLIST.** Header + element directory + per-element data regions.
 
@@ -163,9 +163,9 @@ SHM lifetime is fully automatic via chained external pointer finalizers. Three i
 
 ### src/
 
-- **mori.h** — types (`mori_shm`, `mori_buf`, `mori_vec` with `index` field, `mori_list_view`), declarations, `MORI_ALIGN64`, and the identifier grammar constants (`MORI_NAME_MAX`, `MORI_MAX_PATH`, `MORI_IDENTIFIER_MAX`, `MORI_FORMAT_BUFLEN`, `MORI_PREFIX_LITERAL`).
+- **mori.h** — types (`mori_shm`, `mori_buf`, `mori_vec` with `index` field, `mori_list_view`), declarations, `MORI_ALIGN64`, `mori_sizeof_elt`, and the identifier grammar constants (`MORI_NAME_MAX`, `MORI_MAX_PATH`, `MORI_IDENTIFIER_MAX`, `MORI_FORMAT_BUFLEN`, `MORI_PREFIX_LITERAL`).
 - **shm.c** — platform SHM create/open/close + finalizers for both sides.
-- **serialize.c** — `mori_serialize_count`, `mori_serialize_into`, `mori_unserialize_from`, `mori_sizeof_elt`. Used for fallback (non-zero-copy) ALTLIST entries where directory `sexptype == 0`.
+- **serialize.c** — `mori_serialize_count`, `mori_serialize_into`, `mori_unserialize_from`. Used for fallback (non-zero-copy) ALTLIST entries where directory `sexptype == 0`.
 - **altrep.c** — all ALTREP class definitions, `mori_create` dispatcher, recursive writers (`mori_nested_size` / `mori_nested_write`), consumer open+wrap (`mori_shm_open_and_wrap`), path open (`mori_open_path_c`), view constructors (`mori_make_view_extptr` for bare keeper-chain extptrs, `mori_make_list_view` for full ALTLIST + attrs), identity/name (`mori_is_shared` / `mori_shm_name`), identifier formatter / parser (`mori_format_chain` / `mori_parse_identifier`), serialization hooks, `mori_altrep_init`.
 - **init.c** — `R_init_mori`, `.Call` registration table (4 entries: `mori_create`, `mori_shm_open_and_wrap`, `mori_is_shared`, `mori_shm_name`).
 
