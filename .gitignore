@@ -14,5 +14,6 @@ compile_commands.json
 docs/
 # Claude Code
 .claude/
+.cache/
 # OS
 .DS_Store
