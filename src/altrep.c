@@ -266,23 +266,26 @@ static void mori_owned_finalizer(SEXP ptr) {
  */
 
 static R_xlen_t mori_vec_Length(SEXP x) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return XLENGTH(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return XLENGTH(d2);
   mori_vec *v = (mori_vec *) R_ExternalPtrAddr(R_altrep_data1(x));
   return v->length;
 }
 
 static const void *mori_vec_Dataptr_or_null(SEXP x) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return DATAPTR_RO(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return DATAPTR_RO(d2);
   mori_vec *v = (mori_vec *) R_ExternalPtrAddr(R_altrep_data1(x));
   return v->data;
 }
 
 static void *mori_vec_Dataptr(SEXP x, Rboolean writable) {
 
-  if (R_altrep_data2(x) != R_NilValue)
-    return mori_data_ptr(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return mori_data_ptr(d2);
 
   mori_vec *v = (mori_vec *) R_ExternalPtrAddr(R_altrep_data1(x));
 
@@ -295,11 +298,12 @@ static void *mori_vec_Dataptr(SEXP x, Rboolean writable) {
   R_xlen_t n = v->length;
   int type = TYPEOF(x);
   SEXP mat = PROTECT(Rf_allocVector(type, n));
-  memcpy(mori_data_ptr(mat), v->data, (size_t) n * mori_sizeof_elt(type));
+  void *p = mori_data_ptr(mat);
+  memcpy(p, v->data, (size_t) n * mori_sizeof_elt(type));
   R_set_altrep_data2(x, mat);
   UNPROTECT(1);
 
-  return mori_data_ptr(mat);
+  return p;
 }
 
 /* keeper: SEXP kept alive via the extptr's protected slot (parent SHM). */
@@ -366,28 +370,32 @@ static inline SEXP mori_string_elt_shm(mori_str *s, R_xlen_t i) {
 }
 
 static R_xlen_t mori_string_Length(SEXP x) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return XLENGTH(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return XLENGTH(d2);
   mori_str *s = (mori_str *) R_ExternalPtrAddr(R_altrep_data1(x));
   return s->length;
 }
 
 static SEXP mori_string_Elt(SEXP x, R_xlen_t i) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return STRING_ELT(R_altrep_data2(x), i);
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return STRING_ELT(d2, i);
   mori_str *s = (mori_str *) R_ExternalPtrAddr(R_altrep_data1(x));
   return mori_string_elt_shm(s, i);
 }
 
 static const void *mori_string_Dataptr_or_null(SEXP x) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return DATAPTR_RO(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return DATAPTR_RO(d2);
   return NULL;
 }
 
 static void *mori_string_Dataptr(SEXP x, Rboolean writable) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return mori_data_ptr(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return (void *) DATAPTR_RO(d2);
 
   mori_str *s = (mori_str *) R_ExternalPtrAddr(R_altrep_data1(x));
   R_xlen_t n = s->length;
@@ -397,7 +405,7 @@ static void *mori_string_Dataptr(SEXP x, Rboolean writable) {
   R_set_altrep_data2(x, mat);
   UNPROTECT(1);
 
-  return mori_data_ptr(mat);
+  return (void *) DATAPTR_RO(mat);
 }
 
 static SEXP mori_string_Duplicate(SEXP x, Rboolean deep) {
@@ -444,13 +452,11 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
                                 int32_t index, SEXP keeper) {
 
   unsigned char *dir = base + 24 + 32 * (size_t) index;
-  int64_t data_offset, data_size, length;
-  int32_t sexptype, attrs_size;
-  memcpy(&data_offset, dir, 8);
-  memcpy(&data_size, dir + 8, 8);
-  memcpy(&sexptype, dir + 16, 4);
-  memcpy(&attrs_size, dir + 20, 4);
-  memcpy(&length, dir + 24, 8);
+  mori_elem entry;
+  memcpy(&entry, dir, sizeof(mori_elem));
+  int64_t data_offset = entry.data_offset, data_size = entry.data_size;
+  int64_t length = entry.length;
+  int32_t sexptype = entry.sexptype, attrs_size = entry.attrs_size;
 
   if (mori_oob(data_offset, data_size, region_size))
     Rf_error("mori: invalid element data");
@@ -1244,11 +1250,10 @@ static SEXP mori_open_path_c(const char *name,
       Rf_error("mori: path index out of bounds");
 
     unsigned char *dir = cur_base + 24 + 32 * (size_t) idx;
-    int64_t data_offset, data_size;
-    int32_t sexptype;
-    memcpy(&data_offset, dir, 8);
-    memcpy(&data_size, dir + 8, 8);
-    memcpy(&sexptype, dir + 16, 4);
+    mori_elem entry;
+    memcpy(&entry, dir, sizeof(mori_elem));
+    int64_t data_offset = entry.data_offset, data_size = entry.data_size;
+    int32_t sexptype = entry.sexptype;
 
     if (sexptype != VECSXP)
       Rf_error("mori: path step is not a nested list");
