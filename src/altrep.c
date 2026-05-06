@@ -1010,27 +1010,18 @@ static SEXP mori_open_vector(SEXP shm_ptr) {
 
   mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(shm_ptr);
   unsigned char *base = (unsigned char *) shm->addr;
-  int64_t shm_size = (int64_t) shm->size;
   int32_t sexptype;
   int64_t length, attrs_size;
-  if (shm_size < 64)
-    Rf_error("mori: invalid vector region");
   memcpy(&sexptype, base + 4, 4);
   memcpy(&length, base + 8, 8);
   memcpy(&attrs_size, base + 16, 8);
-
-  size_t elt_size = mori_sizeof_elt(sexptype);
-  if (elt_size == 0 || length < 0 || attrs_size < 0 ||
-      attrs_size > shm_size - 64 ||
-      length > (shm_size - 64 - attrs_size) / (int64_t) elt_size)
-    Rf_error("mori: invalid vector region");
 
   SEXP result = PROTECT(mori_make_vector(
     base + 64, (R_xlen_t) length, sexptype, shm_ptr
   ));
 
   if (attrs_size > 0) {
-    size_t data_bytes = (size_t) length * elt_size;
+    size_t data_bytes = (size_t) length * mori_sizeof_elt(sexptype);
     mori_restore_attrs(result, base + 64 + data_bytes, (size_t) attrs_size);
   }
 
@@ -1042,20 +1033,11 @@ static SEXP mori_open_string(SEXP shm_ptr) {
 
   mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(shm_ptr);
   unsigned char *base = (unsigned char *) shm->addr;
-  int64_t shm_size = (int64_t) shm->size;
   int32_t attrs_size;
   int64_t n, str_data_size;
-  if (shm_size < 24)
-    Rf_error("mori: invalid string region");
   memcpy(&attrs_size, base + 4, 4);
   memcpy(&n, base + 8, 8);
   memcpy(&str_data_size, base + 16, 8);
-
-  if (n < 0 || str_data_size < 0 || attrs_size < 0 ||
-      str_data_size > shm_size - 24 ||
-      attrs_size > shm_size - 24 - str_data_size ||
-      n > str_data_size / 16)
-    Rf_error("mori: invalid string region");
 
   SEXP result = PROTECT(mori_make_string(
     base + 24, (R_xlen_t) n, shm_ptr
