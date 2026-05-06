@@ -785,23 +785,20 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
   R_xlen_t n = XLENGTH(x);
   size_t cur = MORI_ALIGN64(24 + 32 * (size_t) n);
 
-  mori_elem *elems = (n > 0) ?
-    (mori_elem *) R_alloc((size_t) n, sizeof(mori_elem)) : NULL;
-
   for (R_xlen_t i = 0; i < n; i++) {
     SEXP elt = VECTOR_ELT(x, i);
     int type = TYPEOF(elt);
-
-    elems[i].data_offset = (int64_t) cur;
+    mori_elem entry;
+    entry.data_offset = (int64_t) cur;
 
     if (type == LISTSXP || type == VECSXP) {
       SEXP coerced = (type == LISTSXP) ? Rf_coerceVector(elt, VECSXP) : elt;
       PROTECT(coerced);
       size_t written = mori_nested_write(base + cur, coerced);
-      elems[i].sexptype = VECSXP;
-      elems[i].attrs_size = 0;
-      elems[i].length = (int64_t) XLENGTH(coerced);
-      elems[i].data_size = (int64_t) written;
+      entry.sexptype = VECSXP;
+      entry.attrs_size = 0;
+      entry.length = (int64_t) XLENGTH(coerced);
+      entry.data_size = (int64_t) written;
       UNPROTECT(1);
       cur += MORI_ALIGN64(written);
     } else if (mori_shm_eligible(type)) {
@@ -813,10 +810,10 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
       size_t attrs_size = (elt_attrs != R_NilValue) ?
         mori_serialize_count(elt_attrs) : 0;
 
-      elems[i].sexptype = type;
-      elems[i].attrs_size = (int32_t) attrs_size;
-      elems[i].length = (int64_t) XLENGTH(elt);
-      elems[i].data_size = (int64_t) (raw_size + attrs_size);
+      entry.sexptype = type;
+      entry.attrs_size = (int32_t) attrs_size;
+      entry.length = (int64_t) XLENGTH(elt);
+      entry.data_size = (int64_t) (raw_size + attrs_size);
 
       if (type == STRSXP) {
         size_t written = mori_write_strings(base + cur, elt);
@@ -829,16 +826,18 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
       }
 
       UNPROTECT(1);
-      cur += MORI_ALIGN64((size_t) elems[i].data_size);
+      cur += MORI_ALIGN64((size_t) entry.data_size);
     } else {
       size_t elt_size = mori_serialize_count(elt);
       mori_serialize_into(base + cur, elt_size, elt);
-      elems[i].sexptype = 0;
-      elems[i].attrs_size = 0;
-      elems[i].length = 0;
-      elems[i].data_size = (int64_t) elt_size;
+      entry.sexptype = 0;
+      entry.attrs_size = 0;
+      entry.length = 0;
+      entry.data_size = (int64_t) elt_size;
       cur += MORI_ALIGN64(elt_size);
     }
+
+    memcpy(base + 24 + 32 * (size_t) i, &entry, sizeof(mori_elem));
   }
 
   SEXP list_attrs = PROTECT(mori_get_attrs_for_serialize(x));
@@ -858,16 +857,6 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
   memcpy(base + 4, &n32, 4);
   memcpy(base + 8, &attrs_offset, 8);
   memcpy(base + 16, &as64, 8);
-
-  /* Write directory */
-  for (R_xlen_t i = 0; i < n; i++) {
-    unsigned char *d = base + 24 + 32 * (size_t) i;
-    memcpy(d, &elems[i].data_offset, 8);
-    memcpy(d + 8, &elems[i].data_size, 8);
-    memcpy(d + 16, &elems[i].sexptype, 4);
-    memcpy(d + 20, &elems[i].attrs_size, 4);
-    memcpy(d + 24, &elems[i].length, 8);
-  }
 
   return cur;
 }
