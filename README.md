@@ -42,6 +42,8 @@ install.packages("mori")
 
 ## Why mori
 
+<a href="#why-mori"><img src="man/figures/mori-diagram.svg" alt="Diagram showing share() writing an object once into OS-backed shared memory, which is then memory-mapped by other processes using zero-copy ALTREP wrappers" width="720" /></a>
+
 Parallel computing multiplies memory. When 8 workers each need the same
 200 MB dataset, that is 1.6 GB of serialization, transfer, and
 deserialization — with 8 separate copies consuming RAM.
@@ -84,12 +86,12 @@ boot_mean <- \(i, data) colMeans(data[sample(nrow(data), replace = TRUE), ])
 # Without mori — each daemon deserializes a full copy
 mirai_map(1:8, boot_mean, .args = list(data = df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.634  12.492   8.451
+#>   0.709  12.272   8.631
 
 # With mori — each daemon maps the same shared memory
 mirai_map(1:8, boot_mean, .args = list(data = shared_df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.002   0.004   4.768
+#>   0.002   0.004   4.991
 
 daemons(0)
 ```
@@ -109,7 +111,7 @@ reference between processes without going through serialization:
 x <- share(rnorm(1e6))
 
 shared_name(x)
-#> [1] "/mori_9636_1"
+#> [1] "/mori_abda_1"
 
 # Another process — here the same one — can map the region by name
 y <- map_shared(shared_name(x))
@@ -159,15 +161,6 @@ shared pages — no deserialization, no per-process memory allocation.
 All other R objects (environments, closures, language objects) are
 returned unchanged by `share()` — no shared memory region is created.
 
-<figure>
-<img src="man/figures/mori-diagram.svg"
-alt="Diagram showing share() writing an object once into OS-backed shared memory, which is then memory-mapped by other processes using zero-copy ALTREP wrappers" />
-<figcaption aria-hidden="true">Diagram showing <code>share()</code>
-writing an object once into OS-backed shared memory, which is then
-memory-mapped by other processes using zero-copy ALTREP
-wrappers</figcaption>
-</figure>
-
 ### Lazy access
 
 A data frame lives in a single shared region; columns are read on
@@ -177,9 +170,9 @@ strings are accessed lazily per element.
 ``` r
 df <- share(as.data.frame(matrix(rnorm(1e7), ncol = 100)))
 shared_name(df)        # one region for all 100 columns
-#> [1] "/mori_9636_3"
+#> [1] "/mori_abda_3"
 shared_name(df[[50]])  # sub-path into the same region
-#> [1] "/mori_9636_3[50]"
+#> [1] "/mori_abda_3[50]"
 ```
 
 ### Lifetime

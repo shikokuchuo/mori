@@ -1,45 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 310" font-family="system-ui, -apple-system, sans-serif" font-size="14">
-  <!-- Shared Memory box -->
-  <rect x="250" y="20" width="220" height="60" rx="10" fill="#e8f0fe" stroke="#4a7cbf" stroke-width="1.5"/>
-  <text x="360" y="46" text-anchor="middle" font-weight="600" fill="#1a3a5c">Shared Memory</text>
-  <text x="360" y="66" text-anchor="middle" fill="#4a7cbf" font-size="12">(OS-backed)</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 310" fill="none">
+  <defs>
+    <style>
+      text {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', 'Hiragino Sans', sans-serif;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      }
+      .memory-box { fill: none; stroke: #d2604a; stroke-width: 1; }
+      .memory-label { font-size: 13px; fill: #d2604a; font-weight: 500; letter-spacing: 0.5px; }
+      .memory-caption { font-size: 11px; fill: #8a8079; }
+      .process-box { fill: none; stroke: #c7bfb5; stroke-width: 0.75; }
+      .process-label { font-size: 12.5px; fill: #6b635b; font-weight: 400; }
+      .conn { stroke: #c7bfb5; stroke-width: 0.75; }
+      .dotted { stroke: #c7bfb5; stroke-width: 0.75; stroke-dasharray: 2 3; }
+      .arrow { fill: #c7bfb5; }
+      .arrow-accent { fill: #d2604a; }
+      .code-label { font-size: 11px; fill: #8a8079; }
+      .annotation { font-size: 11px; fill: #8a8079; }
+      .caption { font-size: 11px; fill: #8a8079; font-style: italic; }
+    </style>
+  </defs>
 
-  <!-- create() label and arrow -->
-  <text x="140" y="44" text-anchor="middle" font-size="11" fill="#888">share(obj)</text>
-  <text x="140" y="62" text-anchor="middle" font-size="11" fill="#888">write once</text>
-  <line x1="200" y1="48" x2="244" y2="48" stroke="#4a7cbf" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Shared Memory box (top, coral — the central element) -->
+  <rect class="memory-box" x="250" y="20" width="220" height="60" rx="1" />
+  <text class="memory-label" x="360" y="46" text-anchor="middle">Shared memory</text>
+  <text class="memory-caption" x="360" y="64" text-anchor="middle">OS-backed</text>
 
-  <!-- mmap connector: trunk, crossbar, and 4 prongs -->
-  <line x1="360" y1="80" x2="360" y2="140" stroke="#4a7cbf" stroke-width="1.2"/>
-  <line x1="100" y1="140" x2="620" y2="140" stroke="#4a7cbf" stroke-width="1.2"/>
-  <line x1="100" y1="140" x2="100" y2="198" stroke="#4a7cbf" stroke-width="1.2" marker-end="url(#arrow)"/>
-  <line x1="273" y1="140" x2="273" y2="198" stroke="#4a7cbf" stroke-width="1.2" marker-end="url(#arrow)"/>
-  <line x1="447" y1="140" x2="447" y2="198" stroke="#4a7cbf" stroke-width="1.2" marker-end="url(#arrow)"/>
-  <line x1="620" y1="140" x2="620" y2="198" stroke="#4a7cbf" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <!-- share(obj) input — dotted line + coral arrowhead penetrating the box -->
+  <text class="code-label mono" x="200" y="46" text-anchor="end">share(obj)</text>
+  <text class="annotation" x="200" y="62" text-anchor="end">write once</text>
+  <line class="dotted" x1="205" y1="50" x2="261" y2="50" />
+  <polygon class="arrow-accent" points="269,50 261,46 261,54" />
 
-  <!-- mmap label -->
-  <text x="384" y="130" text-anchor="start" fill="#888" font-size="11">mmap</text>
+  <!-- Trunk down from memory box -->
+  <line class="conn" x1="360" y1="80" x2="360" y2="140" />
+  <!-- Crossbar -->
+  <line class="conn" x1="100" y1="140" x2="620" y2="140" />
+  <!-- mmap annotation -->
+  <text class="annotation mono" x="370" y="130">mmap</text>
 
-  <!-- Process boxes -->
-  <rect x="40" y="202" width="120" height="34" rx="8" fill="#f0f4e8" stroke="#6a9a3a" stroke-width="1.2"/>
-  <text x="100" y="224" text-anchor="middle" fill="#3a5c1a" font-size="13">Process 1</text>
+  <!-- Prongs to processes (taupe, downward arrows just above each box) -->
+  <line class="conn" x1="100" y1="140" x2="100" y2="194" />
+  <polygon class="arrow" points="100,198 96,191 104,191" />
+  <line class="conn" x1="273" y1="140" x2="273" y2="194" />
+  <polygon class="arrow" points="273,198 269,191 277,191" />
+  <line class="conn" x1="447" y1="140" x2="447" y2="194" />
+  <polygon class="arrow" points="447,198 443,191 451,191" />
+  <line class="conn" x1="620" y1="140" x2="620" y2="194" />
+  <polygon class="arrow" points="620,198 616,191 624,191" />
 
-  <rect x="213" y="202" width="120" height="34" rx="8" fill="#f0f4e8" stroke="#6a9a3a" stroke-width="1.2"/>
-  <text x="273" y="224" text-anchor="middle" fill="#3a5c1a" font-size="13">Process 2</text>
+  <!-- Process boxes (taupe outline, mid-grey label) -->
+  <rect class="process-box" x="40" y="202" width="120" height="34" rx="1" />
+  <text class="process-label" x="100" y="223" text-anchor="middle">Process 1</text>
 
-  <rect x="387" y="202" width="120" height="34" rx="8" fill="#f0f4e8" stroke="#6a9a3a" stroke-width="1.2"/>
-  <text x="447" y="224" text-anchor="middle" fill="#3a5c1a" font-size="13">Process 3</text>
+  <rect class="process-box" x="213" y="202" width="120" height="34" rx="1" />
+  <text class="process-label" x="273" y="223" text-anchor="middle">Process 2</text>
 
-  <rect x="560" y="202" width="120" height="34" rx="8" fill="#f0f4e8" stroke="#6a9a3a" stroke-width="1.2"/>
-  <text x="620" y="224" text-anchor="middle" fill="#3a5c1a" font-size="13">Process 4</text>
+  <rect class="process-box" x="387" y="202" width="120" height="34" rx="1" />
+  <text class="process-label" x="447" y="223" text-anchor="middle">Process 3</text>
+
+  <rect class="process-box" x="560" y="202" width="120" height="34" rx="1" />
+  <text class="process-label" x="620" y="223" text-anchor="middle">Process 4</text>
 
   <!-- Subtitle -->
-  <text x="360" y="270" text-anchor="middle" fill="#888" font-size="12" font-style="italic">ALTREP wrappers — zero-copy reads</text>
+  <text class="caption" x="360" y="270" text-anchor="middle">ALTREP wrappers — zero-copy reads</text>
 
-  <!-- Arrow marker -->
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4a7cbf"/>
-    </marker>
-  </defs>
 </svg>

@@ -48,6 +48,8 @@ install.packages("mori")
 
 ## Why mori
 
+<a href="#why-mori"><img src="man/figures/mori-diagram.svg" alt="Diagram showing share() writing an object once into OS-backed shared memory, which is then memory-mapped by other processes using zero-copy ALTREP wrappers" width="720" /></a>
+
 Parallel computing multiplies memory.
 When 8 workers each need the same 200 MB dataset, that is 1.6 GB of serialization, transfer, and deserialization — with 8 separate copies consuming RAM.
 
@@ -147,8 +149,6 @@ Pairlists are coerced to lists.
 `share()` returns ALTREP wrappers that point into the shared pages — no deserialization, no per-process memory allocation.
 
 All other R objects (environments, closures, language objects) are returned unchanged by `share()` — no shared memory region is created.
-
-![Diagram showing `share()` writing an object once into OS-backed shared memory, which is then memory-mapped by other processes using zero-copy ALTREP wrappers](man/figures/mori-diagram.svg)
 
 ### Lazy access
 
