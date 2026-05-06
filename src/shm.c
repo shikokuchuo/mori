@@ -261,7 +261,10 @@ mori_shm *mori_shm_open_heap(const char *name) {
 
 // Platform-independent finalizers --------------------------------------------
 
-/* Daemon-side finalizer: unmap only, don't unlink (host manages lifetime) */
+/* Mapping finalizer (both sides): releases this side's mapping only.
+   The name (POSIX) / creator handle (Windows) is released independently
+   by mori_host_finalizer on the chained host_tag extptr — so a consumer
+   keeps reading after the host is GC'd. */
 void mori_shm_finalizer(SEXP ptr) {
   mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(ptr);
   if (shm) {

@@ -283,12 +283,13 @@ static void *mori_vec_Dataptr(SEXP x, Rboolean writable) {
   if (!writable)
     return (void *) v->data;
 
-  /* COW: materialize to a regular R vector */
+  /* COW: materialize to a regular R vector. Attributes live on the ALTREP
+     wrapper x, not on data2 — no method reads data2's attrs, and R's
+     ALTREP serialize reapplies ATTRIB(x) on top of the unserialized state. */
   R_xlen_t n = v->length;
   int type = TYPEOF(x);
   SEXP mat = PROTECT(Rf_allocVector(type, n));
   memcpy(mori_data_ptr(mat), v->data, (size_t) n * mori_sizeof_elt(type));
-  DUPLICATE_ATTRIB(mat, x);
   R_set_altrep_data2(x, mat);
   UNPROTECT(1);
 
