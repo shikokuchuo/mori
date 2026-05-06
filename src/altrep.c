@@ -45,6 +45,12 @@ static inline void *mori_data_ptr(SEXP x) {
   }
 }
 
+// Bounds check for a [offset, offset+size) chunk within a region -------------
+
+static inline int mori_oob(int64_t offset, int64_t size, int64_t region_size) {
+  return offset < 0 || size < 0 || offset > region_size - size;
+}
+
 // Attribute helpers for API compliance ----------------------------------------
 
 /* Named list on R >= 4.6.0, pairlist otherwise. R_NilValue if none.
@@ -283,12 +289,13 @@ static void *mori_vec_Dataptr(SEXP x, Rboolean writable) {
   if (!writable)
     return (void *) v->data;
 
-  /* COW: materialize to a regular R vector */
+  /* COW: materialize to a regular R vector. Attributes live on the ALTREP
+     wrapper x, not on data2 — no method reads data2's attrs, and R's
+     ALTREP serialize reapplies ATTRIB(x) on top of the unserialized state. */
   R_xlen_t n = v->length;
   int type = TYPEOF(x);
   SEXP mat = PROTECT(Rf_allocVector(type, n));
   memcpy(mori_data_ptr(mat), v->data, (size_t) n * mori_sizeof_elt(type));
-  DUPLICATE_ATTRIB(mat, x);
   R_set_altrep_data2(x, mat);
   UNPROTECT(1);
 
@@ -445,12 +452,10 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
   memcpy(&attrs_size, dir + 20, 4);
   memcpy(&length, dir + 24, 8);
 
-  /* Bounds-check the data region against the enclosing region */
-  if (data_offset < 0 || data_size < 0 ||
-      data_offset + data_size > region_size)
-    Rf_error("mori: element data out of bounds");
+  if (mori_oob(data_offset, data_size, region_size))
+    Rf_error("mori: invalid element data");
   if (attrs_size > 0 && attrs_size > data_size)
-    Rf_error("mori: element attrs size larger than data");
+    Rf_error("mori: invalid element data");
 
   SEXP result;
   if (sexptype == VECSXP) {
@@ -509,12 +514,12 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
                                   int32_t index, SEXP keeper) {
 
   if (region_size < 24)
-    Rf_error("mori: nested list region too small");
+    Rf_error("mori: invalid nested list region");
 
   uint32_t magic;
   memcpy(&magic, base, 4);
   if (magic != 0x4D4F524Cu)
-    Rf_error("mori: invalid nested list magic bytes");
+    Rf_error("mori: invalid nested list region");
 
   int32_t n;
   int64_t attrs_offset, attrs_size;
@@ -522,11 +527,9 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
   memcpy(&attrs_offset, base + 8, 8);
   memcpy(&attrs_size, base + 16, 8);
 
-  if (n < 0 || (int64_t) 24 + (int64_t) 32 * n > region_size)
-    Rf_error("mori: nested list directory out of bounds");
-  if (attrs_offset < 0 || attrs_size < 0 ||
-      attrs_offset + attrs_size > region_size)
-    Rf_error("mori: nested list attrs out of bounds");
+  if (n < 0 || n > (region_size - 24) / 32 ||
+      mori_oob(attrs_offset, attrs_size, region_size))
+    Rf_error("mori: invalid nested list region");
 
   mori_list_view *v = malloc(sizeof(mori_list_view));
   if (!v) Rf_error("mori: allocation failure");
@@ -1224,7 +1227,7 @@ static SEXP mori_open_path_c(const char *name,
   uint32_t magic;
   memcpy(&magic, base, 4);
   if (magic != 0x4D4F524Cu)
-    Rf_error("mori: not a list region");  /* GC reclaims shm_ptr via longjmp */
+    Rf_error("mori: invalid nested list region");  /* GC reclaims shm_ptr via longjmp */
 
   SEXP keeper = shm_ptr;
   unsigned char *cur_base = base;
@@ -1250,9 +1253,8 @@ static SEXP mori_open_path_c(const char *name,
 
     if (sexptype != VECSXP)
       Rf_error("mori: path step is not a nested list");
-    if (data_offset < 0 || data_size < 0 ||
-        data_offset + data_size > cur_region_size)
-      Rf_error("mori: nested region out of bounds");
+    if (mori_oob(data_offset, data_size, cur_region_size))
+      Rf_error("mori: invalid nested region");
 
     /* Bare extptr: no ALTLIST wrapper, no attr restore (intermediate is
        never observed; only its index in the keeper chain matters). */

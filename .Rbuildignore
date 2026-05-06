@@ -2,6 +2,7 @@
 ^\.git$
 ^\.gitignore$
 ^\.claude$
+^\.cache$
 ^README\.Rmd$
 ^\.github$
 ^CLAUDE\.md$
