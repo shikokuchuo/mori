@@ -45,6 +45,12 @@ static inline void *mori_data_ptr(SEXP x) {
   }
 }
 
+// Bounds check for a [offset, offset+size) chunk within a region -------------
+
+static inline int mori_oob(int64_t offset, int64_t size, int64_t region_size) {
+  return offset < 0 || size < 0 || offset > region_size - size;
+}
+
 // Attribute helpers for API compliance ----------------------------------------
 
 /* Named list on R >= 4.6.0, pairlist otherwise. R_NilValue if none.
@@ -446,9 +452,7 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
   memcpy(&attrs_size, dir + 20, 4);
   memcpy(&length, dir + 24, 8);
 
-  /* Bounds-check the data region against the enclosing region */
-  if (data_offset < 0 || data_size < 0 ||
-      data_offset > region_size - data_size)
+  if (mori_oob(data_offset, data_size, region_size))
     Rf_error("mori: element data out of bounds");
   if (attrs_size > 0 && attrs_size > data_size)
     Rf_error("mori: element attrs size larger than data");
@@ -525,8 +529,7 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
 
   if (n < 0 || (int64_t) 24 + (int64_t) 32 * n > region_size)
     Rf_error("mori: nested list directory out of bounds");
-  if (attrs_offset < 0 || attrs_size < 0 ||
-      attrs_offset > region_size - attrs_size)
+  if (mori_oob(attrs_offset, attrs_size, region_size))
     Rf_error("mori: nested list attrs out of bounds");
 
   mori_list_view *v = malloc(sizeof(mori_list_view));
@@ -1251,8 +1254,7 @@ static SEXP mori_open_path_c(const char *name,
 
     if (sexptype != VECSXP)
       Rf_error("mori: path step is not a nested list");
-    if (data_offset < 0 || data_size < 0 ||
-        data_offset > cur_region_size - data_size)
+    if (mori_oob(data_offset, data_size, cur_region_size))
       Rf_error("mori: nested region out of bounds");
 
     /* Bare extptr: no ALTLIST wrapper, no attr restore (intermediate is
