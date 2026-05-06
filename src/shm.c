@@ -29,10 +29,10 @@ int mori_shm_create(mori_shm *shm, size_t size) {
   HANDLE h = CreateFileMappingA(
     INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, hi, lo, shm->name
   );
-  if (!h) return -1;
+  if (h == NULL) return -1;
 
   void *addr = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, size);
-  if (!addr) {
+  if (addr == NULL) {
     CloseHandle(h);
     return -1;
   }
@@ -55,10 +55,10 @@ int mori_shm_open(mori_shm *shm, const char *name) {
   shm->name_len = (uint8_t) nl;
 
   HANDLE h = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
-  if (!h) return -1;
+  if (h == NULL) return -1;
 
   void *addr = MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0);
-  if (!addr) {
+  if (addr == NULL) {
     CloseHandle(h);
     return -1;
   }
@@ -74,8 +74,8 @@ int mori_shm_open(mori_shm *shm, const char *name) {
 
 void mori_shm_close(mori_shm *shm, int unlink) {
   (void) unlink;
-  if (shm->addr) UnmapViewOfFile(shm->addr);
-  if (shm->handle) CloseHandle(shm->handle);
+  if (shm->addr != NULL) UnmapViewOfFile(shm->addr);
+  if (shm->handle != NULL) CloseHandle(shm->handle);
   shm->addr = NULL;
   shm->handle = NULL;
 }
@@ -222,7 +222,7 @@ int mori_shm_open(mori_shm *shm, const char *name) {
 }
 
 void mori_shm_close(mori_shm *shm, int unlink) {
-  if (shm->addr) munmap(shm->addr, shm->size);
+  if (shm->addr != NULL) munmap(shm->addr, shm->size);
   if (unlink) mori_shm_os_unlink(shm->name);
   shm->addr = NULL;
 }
@@ -238,7 +238,7 @@ void mori_shm_close(mori_shm *shm, int unlink) {
 int mori_shm_create_heap(mori_shm **out, size_t size) {
   *out = NULL;
   mori_shm *shm = malloc(sizeof(mori_shm));
-  if (!shm) return -1;
+  if (shm == NULL) return -1;
   int rc = mori_shm_create(shm, size);
   if (rc != 0) {
     free(shm);
@@ -251,7 +251,7 @@ int mori_shm_create_heap(mori_shm **out, size_t size) {
 /* Malloc a mori_shm and open an existing SHM region into it. */
 mori_shm *mori_shm_open_heap(const char *name) {
   mori_shm *shm = malloc(sizeof(mori_shm));
-  if (!shm) return NULL;
+  if (shm == NULL) return NULL;
   if (mori_shm_open(shm, name) != 0) {
     free(shm);
     return NULL;
@@ -267,7 +267,7 @@ mori_shm *mori_shm_open_heap(const char *name) {
    keeps reading after the host is GC'd. */
 void mori_shm_finalizer(SEXP ptr) {
   mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(ptr);
-  if (shm) {
+  if (shm != NULL) {
     mori_shm_close(shm, 0);
     free(shm);
     R_ClearExternalPtr(ptr);
@@ -277,11 +277,11 @@ void mori_shm_finalizer(SEXP ptr) {
 /* Host-side finalizer: releases the SHM name/handle */
 void mori_host_finalizer(SEXP ptr) {
   mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(ptr);
-  if (shm) {
+  if (shm != NULL) {
 #ifdef _WIN32
-    if (shm->handle) CloseHandle(shm->handle);
+    if (shm->handle != NULL) CloseHandle(shm->handle);
 #else
-    if (shm->name[0]) mori_shm_os_unlink(shm->name);
+    if (shm->name[0] != '\0') mori_shm_os_unlink(shm->name);
 #endif
     free(shm);
     R_ClearExternalPtr(ptr);

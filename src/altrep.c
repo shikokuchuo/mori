@@ -25,6 +25,15 @@ typedef struct {
   int64_t length;
 } mori_elem;
 
+/* ALTSTRING offset table entry (16 bytes per string).
+   str_length < 0 sentinel means NA_STRING.
+   str_encoding is a cetype_t. */
+typedef struct {
+  int64_t str_offset;
+  int32_t str_length;
+  int32_t str_encoding;
+} mori_str_entry;
+
 // SHM eligibility: any atomic vector (attributes stored separately) ---------
 
 static inline int mori_shm_eligible(int type) {
@@ -249,7 +258,7 @@ static int mori_parse_identifier(const char *s,
 
 static void mori_owned_finalizer(SEXP ptr) {
   void *v = R_ExternalPtrAddr(ptr);
-  if (v) {
+  if (v != NULL) {
     free(v);
     R_ClearExternalPtr(ptr);
   }
@@ -266,23 +275,26 @@ static void mori_owned_finalizer(SEXP ptr) {
  */
 
 static R_xlen_t mori_vec_Length(SEXP x) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return XLENGTH(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return XLENGTH(d2);
   mori_vec *v = (mori_vec *) R_ExternalPtrAddr(R_altrep_data1(x));
   return v->length;
 }
 
 static const void *mori_vec_Dataptr_or_null(SEXP x) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return DATAPTR_RO(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return DATAPTR_RO(d2);
   mori_vec *v = (mori_vec *) R_ExternalPtrAddr(R_altrep_data1(x));
   return v->data;
 }
 
 static void *mori_vec_Dataptr(SEXP x, Rboolean writable) {
 
-  if (R_altrep_data2(x) != R_NilValue)
-    return mori_data_ptr(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return mori_data_ptr(d2);
 
   mori_vec *v = (mori_vec *) R_ExternalPtrAddr(R_altrep_data1(x));
 
@@ -295,11 +307,12 @@ static void *mori_vec_Dataptr(SEXP x, Rboolean writable) {
   R_xlen_t n = v->length;
   int type = TYPEOF(x);
   SEXP mat = PROTECT(Rf_allocVector(type, n));
-  memcpy(mori_data_ptr(mat), v->data, (size_t) n * mori_sizeof_elt(type));
+  void *p = mori_data_ptr(mat);
+  memcpy(p, v->data, (size_t) n * mori_sizeof_elt(type));
   R_set_altrep_data2(x, mat);
   UNPROTECT(1);
 
-  return mori_data_ptr(mat);
+  return p;
 }
 
 /* keeper: SEXP kept alive via the extptr's protected slot (parent SHM). */
@@ -317,7 +330,7 @@ static SEXP mori_make_vector(const void *data, R_xlen_t length,
   }
 
   mori_vec *v = malloc(sizeof(mori_vec));
-  if (!v) Rf_error("mori: allocation failure");
+  if (v == NULL) Rf_error("mori: allocation failure");
   v->data = data;
   v->length = length;
   v->index = -1;
@@ -352,42 +365,43 @@ typedef struct {
 } mori_str;
 
 static inline SEXP mori_string_elt_shm(mori_str *s, R_xlen_t i) {
-  const unsigned char *entry = s->table + 16 * (size_t) i;
-  int64_t str_offset;
-  int32_t str_length, str_encoding;
-  memcpy(&str_offset, entry, 8);
-  memcpy(&str_length, entry + 8, 4);
-  memcpy(&str_encoding, entry + 12, 4);
+  mori_str_entry e;
+  memcpy(&e, s->table + sizeof(mori_str_entry) * (size_t) i,
+         sizeof(mori_str_entry));
 
-  if (str_length < 0) return NA_STRING;
+  if (e.str_length < 0) return NA_STRING;
 
-  return Rf_mkCharLenCE((const char *) (s->data + str_offset),
-                        str_length, (cetype_t) str_encoding);
+  return Rf_mkCharLenCE((const char *) (s->data + e.str_offset),
+                        e.str_length, (cetype_t) e.str_encoding);
 }
 
 static R_xlen_t mori_string_Length(SEXP x) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return XLENGTH(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return XLENGTH(d2);
   mori_str *s = (mori_str *) R_ExternalPtrAddr(R_altrep_data1(x));
   return s->length;
 }
 
 static SEXP mori_string_Elt(SEXP x, R_xlen_t i) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return STRING_ELT(R_altrep_data2(x), i);
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return STRING_ELT(d2, i);
   mori_str *s = (mori_str *) R_ExternalPtrAddr(R_altrep_data1(x));
   return mori_string_elt_shm(s, i);
 }
 
 static const void *mori_string_Dataptr_or_null(SEXP x) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return DATAPTR_RO(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return DATAPTR_RO(d2);
   return NULL;
 }
 
 static void *mori_string_Dataptr(SEXP x, Rboolean writable) {
-  if (R_altrep_data2(x) != R_NilValue)
-    return mori_data_ptr(R_altrep_data2(x));
+  SEXP d2 = R_altrep_data2(x);
+  if (d2 != R_NilValue)
+    return (void *) DATAPTR_RO(d2);
 
   mori_str *s = (mori_str *) R_ExternalPtrAddr(R_altrep_data1(x));
   R_xlen_t n = s->length;
@@ -397,7 +411,7 @@ static void *mori_string_Dataptr(SEXP x, Rboolean writable) {
   R_set_altrep_data2(x, mat);
   UNPROTECT(1);
 
-  return mori_data_ptr(mat);
+  return (void *) DATAPTR_RO(mat);
 }
 
 static SEXP mori_string_Duplicate(SEXP x, Rboolean deep) {
@@ -417,9 +431,9 @@ static SEXP mori_make_string(const unsigned char *region_base,
                              R_xlen_t n, SEXP keeper) {
 
   mori_str *s = malloc(sizeof(mori_str));
-  if (!s) Rf_error("mori: allocation failure");
+  if (s == NULL) Rf_error("mori: allocation failure");
 
-  size_t table_size = 16 * (size_t) n;
+  size_t table_size = sizeof(mori_str_entry) * (size_t) n;
   s->table = region_base;
   s->data = region_base + MORI_ALIGN64(table_size);
   s->length = n;
@@ -444,13 +458,11 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
                                 int32_t index, SEXP keeper) {
 
   unsigned char *dir = base + 24 + 32 * (size_t) index;
-  int64_t data_offset, data_size, length;
-  int32_t sexptype, attrs_size;
-  memcpy(&data_offset, dir, 8);
-  memcpy(&data_size, dir + 8, 8);
-  memcpy(&sexptype, dir + 16, 4);
-  memcpy(&attrs_size, dir + 20, 4);
-  memcpy(&length, dir + 24, 8);
+  mori_elem entry;
+  memcpy(&entry, dir, sizeof(mori_elem));
+  int64_t data_offset = entry.data_offset, data_size = entry.data_size;
+  int64_t length = entry.length;
+  int32_t sexptype = entry.sexptype, attrs_size = entry.attrs_size;
 
   if (mori_oob(data_offset, data_size, region_size))
     Rf_error("mori: invalid element data");
@@ -509,9 +521,14 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
    wrapping its mori_list_view. No ALTREP wrapper, no attribute restoration —
    suitable for path-walk intermediates whose ALTLIST view is never observed.
    keeper: parent extptr (shm_tag for root, owned_tag for sub-list).
+   out_attrs_offset / out_attrs_size: optional out-params (NULL to skip);
+   when non-NULL, populated with the validated attrs locator so the caller
+   can avoid re-reading the header.
    Errors cleanly on corrupt input rather than SEGV. */
 static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
-                                  int32_t index, SEXP keeper) {
+                                  int32_t index, SEXP keeper,
+                                  int64_t *out_attrs_offset,
+                                  int64_t *out_attrs_size) {
 
   if (region_size < 24)
     Rf_error("mori: invalid nested list region");
@@ -532,7 +549,7 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
     Rf_error("mori: invalid nested list region");
 
   mori_list_view *v = malloc(sizeof(mori_list_view));
-  if (!v) Rf_error("mori: allocation failure");
+  if (v == NULL) Rf_error("mori: allocation failure");
   v->base = base;
   v->region_size = region_size;
   v->n_elements = n;
@@ -540,6 +557,9 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
 
   SEXP ptr = R_MakeExternalPtr(v, mori_owned_tag, keeper);
   R_RegisterCFinalizerEx(ptr, mori_owned_finalizer, TRUE);
+
+  if (out_attrs_offset != NULL) *out_attrs_offset = attrs_offset;
+  if (out_attrs_size != NULL)   *out_attrs_size   = attrs_size;
   return ptr;
 }
 
@@ -547,14 +567,14 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
 static SEXP mori_make_list_view(unsigned char *base, int64_t region_size,
                                 int32_t index, SEXP keeper) {
 
-  SEXP ptr = PROTECT(mori_make_view_extptr(base, region_size, index, keeper));
+  int64_t attrs_offset, attrs_size;
+  SEXP ptr = PROTECT(mori_make_view_extptr(
+    base, region_size, index, keeper, &attrs_offset, &attrs_size
+  ));
 
   /* Cache is allocated lazily on first Elt access */
   SEXP result = PROTECT(R_new_altrep(mori_list_class, ptr, R_NilValue));
 
-  int64_t attrs_offset, attrs_size;
-  memcpy(&attrs_offset, base + 8, 8);
-  memcpy(&attrs_size, base + 16, 8);
   if (attrs_size > 0)
     mori_restore_attrs(result, base + (size_t) attrs_offset,
                        (size_t) attrs_size);
@@ -646,7 +666,7 @@ static SEXP mori_shm_wrap_consumer(mori_shm *shm) {
 static SEXP mori_shm_wrap_producer(mori_shm *shm) {
 
   mori_shm *host = malloc(sizeof(mori_shm));
-  if (!host) Rf_error("mori: allocation failure");
+  if (host == NULL) Rf_error("mori: allocation failure");
   memcpy(host, shm, sizeof(mori_shm));
   host->addr = NULL;
   host->size = 0;
@@ -676,7 +696,7 @@ static SEXP mori_make_result(mori_shm *shm) {
 /* Returns total bytes written (including alignment padding). */
 static size_t mori_write_strings(unsigned char *dest, SEXP x) {
   R_xlen_t n = XLENGTH(x);
-  size_t table_size = 16 * (size_t) n;
+  size_t table_size = sizeof(mori_str_entry) * (size_t) n;
   size_t data_start = MORI_ALIGN64(table_size);
 
   /* Zero-fill alignment gap */
@@ -686,24 +706,23 @@ static size_t mori_write_strings(unsigned char *dest, SEXP x) {
   size_t cur = 0;
   for (R_xlen_t i = 0; i < n; i++) {
     SEXP elt = STRING_ELT(x, i);
-    unsigned char *tbl = dest + 16 * (size_t) i;
+    unsigned char *tbl = dest + sizeof(mori_str_entry) * (size_t) i;
+    mori_str_entry e;
 
     if (elt == NA_STRING) {
-      int64_t off = 0;
-      int32_t len = -1, enc = 0;
-      memcpy(tbl, &off, 8);
-      memcpy(tbl + 8, &len, 4);
-      memcpy(tbl + 12, &enc, 4);
+      e.str_offset = 0;
+      e.str_length = -1;
+      e.str_encoding = 0;
     } else {
       int32_t slen = (int32_t) LENGTH(elt);
-      int64_t off = (int64_t) cur;
-      int32_t enc = (int32_t) Rf_getCharCE(elt);
-      memcpy(tbl, &off, 8);
-      memcpy(tbl + 8, &slen, 4);
-      memcpy(tbl + 12, &enc, 4);
+      e.str_offset = (int64_t) cur;
+      e.str_length = slen;
+      e.str_encoding = (int32_t) Rf_getCharCE(elt);
       memcpy(dest + data_start + cur, CHAR(elt), (size_t) slen);
       cur += (size_t) slen;
     }
+
+    memcpy(tbl, &e, sizeof(mori_str_entry));
   }
 
   return data_start + cur;
@@ -711,7 +730,7 @@ static size_t mori_write_strings(unsigned char *dest, SEXP x) {
 
 static size_t mori_string_data_size(SEXP x) {
   R_xlen_t n = XLENGTH(x);
-  size_t table_size = 16 * (size_t) n;
+  size_t table_size = sizeof(mori_str_entry) * (size_t) n;
   size_t str_bytes = 0;
   for (R_xlen_t i = 0; i < n; i++) {
     SEXP elt = STRING_ELT(x, i);
@@ -779,23 +798,20 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
   R_xlen_t n = XLENGTH(x);
   size_t cur = MORI_ALIGN64(24 + 32 * (size_t) n);
 
-  mori_elem *elems = (n > 0) ?
-    (mori_elem *) R_alloc((size_t) n, sizeof(mori_elem)) : NULL;
-
   for (R_xlen_t i = 0; i < n; i++) {
     SEXP elt = VECTOR_ELT(x, i);
     int type = TYPEOF(elt);
-
-    elems[i].data_offset = (int64_t) cur;
+    mori_elem entry;
+    entry.data_offset = (int64_t) cur;
 
     if (type == LISTSXP || type == VECSXP) {
       SEXP coerced = (type == LISTSXP) ? Rf_coerceVector(elt, VECSXP) : elt;
       PROTECT(coerced);
       size_t written = mori_nested_write(base + cur, coerced);
-      elems[i].sexptype = VECSXP;
-      elems[i].attrs_size = 0;
-      elems[i].length = (int64_t) XLENGTH(coerced);
-      elems[i].data_size = (int64_t) written;
+      entry.sexptype = VECSXP;
+      entry.attrs_size = 0;
+      entry.length = (int64_t) XLENGTH(coerced);
+      entry.data_size = (int64_t) written;
       UNPROTECT(1);
       cur += MORI_ALIGN64(written);
     } else if (mori_shm_eligible(type)) {
@@ -807,10 +823,10 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
       size_t attrs_size = (elt_attrs != R_NilValue) ?
         mori_serialize_count(elt_attrs) : 0;
 
-      elems[i].sexptype = type;
-      elems[i].attrs_size = (int32_t) attrs_size;
-      elems[i].length = (int64_t) XLENGTH(elt);
-      elems[i].data_size = (int64_t) (raw_size + attrs_size);
+      entry.sexptype = type;
+      entry.attrs_size = (int32_t) attrs_size;
+      entry.length = (int64_t) XLENGTH(elt);
+      entry.data_size = (int64_t) (raw_size + attrs_size);
 
       if (type == STRSXP) {
         size_t written = mori_write_strings(base + cur, elt);
@@ -823,16 +839,18 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
       }
 
       UNPROTECT(1);
-      cur += MORI_ALIGN64((size_t) elems[i].data_size);
+      cur += MORI_ALIGN64((size_t) entry.data_size);
     } else {
       size_t elt_size = mori_serialize_count(elt);
       mori_serialize_into(base + cur, elt_size, elt);
-      elems[i].sexptype = 0;
-      elems[i].attrs_size = 0;
-      elems[i].length = 0;
-      elems[i].data_size = (int64_t) elt_size;
+      entry.sexptype = 0;
+      entry.attrs_size = 0;
+      entry.length = 0;
+      entry.data_size = (int64_t) elt_size;
       cur += MORI_ALIGN64(elt_size);
     }
+
+    memcpy(base + 24 + 32 * (size_t) i, &entry, sizeof(mori_elem));
   }
 
   SEXP list_attrs = PROTECT(mori_get_attrs_for_serialize(x));
@@ -852,16 +870,6 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
   memcpy(base + 4, &n32, 4);
   memcpy(base + 8, &attrs_offset, 8);
   memcpy(base + 16, &as64, 8);
-
-  /* Write directory */
-  for (R_xlen_t i = 0; i < n; i++) {
-    unsigned char *d = base + 24 + 32 * (size_t) i;
-    memcpy(d, &elems[i].data_offset, 8);
-    memcpy(d + 8, &elems[i].data_size, 8);
-    memcpy(d + 16, &elems[i].sexptype, 4);
-    memcpy(d + 20, &elems[i].attrs_size, 4);
-    memcpy(d + 24, &elems[i].length, 8);
-  }
 
   return cur;
 }
@@ -1093,7 +1101,7 @@ SEXP mori_shm_open_and_wrap(SEXP name) {
 
   if (rc == 0) {
     mori_shm *shm = mori_shm_open_heap(shm_name);
-    if (!shm)
+    if (shm == NULL)
       Rf_error("mori: shared memory region not found: '%s'", shm_name);
     SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
     SEXP result = mori_dispatch_by_magic(shm_ptr, shm_name);
@@ -1218,14 +1226,14 @@ static SEXP mori_open_path_c(const char *name,
                              const int32_t *path, int path_len) {
 
   mori_shm *shm = mori_shm_open_heap(name);
-  if (!shm)
+  if (shm == NULL)
     Rf_error("mori: shared memory region not found: '%s'", name);
 
   SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
 
   /* Root view (index = -1): uniform chain shape with mori_open_list. */
   SEXP root_view = PROTECT(mori_make_view_extptr(
-    (unsigned char *) shm->addr, (int64_t) shm->size, -1, shm_ptr
+    (unsigned char *) shm->addr, (int64_t) shm->size, -1, shm_ptr, NULL, NULL
   ));
   mori_list_view *rv = (mori_list_view *) R_ExternalPtrAddr(root_view);
 
@@ -1244,11 +1252,10 @@ static SEXP mori_open_path_c(const char *name,
       Rf_error("mori: path index out of bounds");
 
     unsigned char *dir = cur_base + 24 + 32 * (size_t) idx;
-    int64_t data_offset, data_size;
-    int32_t sexptype;
-    memcpy(&data_offset, dir, 8);
-    memcpy(&data_size, dir + 8, 8);
-    memcpy(&sexptype, dir + 16, 4);
+    mori_elem entry;
+    memcpy(&entry, dir, sizeof(mori_elem));
+    int64_t data_offset = entry.data_offset, data_size = entry.data_size;
+    int32_t sexptype = entry.sexptype;
 
     if (sexptype != VECSXP)
       Rf_error("mori: path step is not a nested list");
@@ -1258,7 +1265,7 @@ static SEXP mori_open_path_c(const char *name,
     /* Bare extptr: no ALTLIST wrapper, no attr restore (intermediate is
        never observed; only its index in the keeper chain matters). */
     REPROTECT(child = mori_make_view_extptr(
-      cur_base + data_offset, data_size, idx, keeper
+      cur_base + data_offset, data_size, idx, keeper, NULL, NULL
     ), child_idx);
     keeper = child;
 
