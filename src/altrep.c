@@ -1223,17 +1223,16 @@ static SEXP mori_open_path_c(const char *name,
 
   SEXP shm_ptr = PROTECT(mori_shm_wrap_consumer(shm));
 
-  unsigned char *base = (unsigned char *) shm->addr;
-  uint32_t magic;
-  memcpy(&magic, base, 4);
-  if (magic != 0x4D4F524Cu)
-    Rf_error("mori: invalid nested list region");  /* GC reclaims shm_ptr via longjmp */
+  /* Root view (index = -1): uniform chain shape with mori_open_list. */
+  SEXP root_view = PROTECT(mori_make_view_extptr(
+    (unsigned char *) shm->addr, (int64_t) shm->size, -1, shm_ptr
+  ));
+  mori_list_view *rv = (mori_list_view *) R_ExternalPtrAddr(root_view);
 
-  SEXP keeper = shm_ptr;
-  unsigned char *cur_base = base;
-  int64_t cur_region_size = (int64_t) shm->size;
-  int32_t cur_n;
-  memcpy(&cur_n, cur_base + 4, 4);
+  SEXP keeper = root_view;
+  unsigned char *cur_base = rv->base;
+  int64_t cur_region_size = rv->region_size;
+  int32_t cur_n = rv->n_elements;
 
   PROTECT_INDEX child_idx;
   SEXP child = R_NilValue;
@@ -1275,7 +1274,7 @@ static SEXP mori_open_path_c(const char *name,
 
   SEXP result = mori_unwrap_element(cur_base, cur_region_size,
                                     leaf_idx, keeper);
-  UNPROTECT(2);
+  UNPROTECT(3);
   return result;
 }
 
