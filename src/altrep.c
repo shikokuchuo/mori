@@ -453,9 +453,9 @@ static SEXP mori_unwrap_element(unsigned char *base, int64_t region_size,
   memcpy(&length, dir + 24, 8);
 
   if (mori_oob(data_offset, data_size, region_size))
-    Rf_error("mori: element data out of bounds");
+    Rf_error("mori: invalid element data");
   if (attrs_size > 0 && attrs_size > data_size)
-    Rf_error("mori: element attrs size larger than data");
+    Rf_error("mori: invalid element data");
 
   SEXP result;
   if (sexptype == VECSXP) {
@@ -514,12 +514,12 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
                                   int32_t index, SEXP keeper) {
 
   if (region_size < 24)
-    Rf_error("mori: nested list region too small");
+    Rf_error("mori: invalid nested list region");
 
   uint32_t magic;
   memcpy(&magic, base, 4);
   if (magic != 0x4D4F524Cu)
-    Rf_error("mori: invalid nested list magic bytes");
+    Rf_error("mori: invalid nested list region");
 
   int32_t n;
   int64_t attrs_offset, attrs_size;
@@ -527,10 +527,9 @@ static SEXP mori_make_view_extptr(unsigned char *base, int64_t region_size,
   memcpy(&attrs_offset, base + 8, 8);
   memcpy(&attrs_size, base + 16, 8);
 
-  if (n < 0 || (int64_t) 24 + (int64_t) 32 * n > region_size)
-    Rf_error("mori: nested list directory out of bounds");
-  if (mori_oob(attrs_offset, attrs_size, region_size))
-    Rf_error("mori: nested list attrs out of bounds");
+  if (n < 0 || n > (region_size - 24) / 32 ||
+      mori_oob(attrs_offset, attrs_size, region_size))
+    Rf_error("mori: invalid nested list region");
 
   mori_list_view *v = malloc(sizeof(mori_list_view));
   if (!v) Rf_error("mori: allocation failure");
@@ -1011,18 +1010,27 @@ static SEXP mori_open_vector(SEXP shm_ptr) {
 
   mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(shm_ptr);
   unsigned char *base = (unsigned char *) shm->addr;
+  int64_t shm_size = (int64_t) shm->size;
   int32_t sexptype;
   int64_t length, attrs_size;
+  if (shm_size < 64)
+    Rf_error("mori: invalid vector region");
   memcpy(&sexptype, base + 4, 4);
   memcpy(&length, base + 8, 8);
   memcpy(&attrs_size, base + 16, 8);
+
+  size_t elt_size = mori_sizeof_elt(sexptype);
+  if (elt_size == 0 || length < 0 || attrs_size < 0 ||
+      attrs_size > shm_size - 64 ||
+      length > (shm_size - 64 - attrs_size) / (int64_t) elt_size)
+    Rf_error("mori: invalid vector region");
 
   SEXP result = PROTECT(mori_make_vector(
     base + 64, (R_xlen_t) length, sexptype, shm_ptr
   ));
 
   if (attrs_size > 0) {
-    size_t data_bytes = (size_t) length * mori_sizeof_elt(sexptype);
+    size_t data_bytes = (size_t) length * elt_size;
     mori_restore_attrs(result, base + 64 + data_bytes, (size_t) attrs_size);
   }
 
@@ -1034,11 +1042,20 @@ static SEXP mori_open_string(SEXP shm_ptr) {
 
   mori_shm *shm = (mori_shm *) R_ExternalPtrAddr(shm_ptr);
   unsigned char *base = (unsigned char *) shm->addr;
+  int64_t shm_size = (int64_t) shm->size;
   int32_t attrs_size;
   int64_t n, str_data_size;
+  if (shm_size < 24)
+    Rf_error("mori: invalid string region");
   memcpy(&attrs_size, base + 4, 4);
   memcpy(&n, base + 8, 8);
   memcpy(&str_data_size, base + 16, 8);
+
+  if (n < 0 || str_data_size < 0 || attrs_size < 0 ||
+      str_data_size > shm_size - 24 ||
+      attrs_size > shm_size - 24 - str_data_size ||
+      n > str_data_size / 16)
+    Rf_error("mori: invalid string region");
 
   SEXP result = PROTECT(mori_make_string(
     base + 24, (R_xlen_t) n, shm_ptr
@@ -1228,7 +1245,7 @@ static SEXP mori_open_path_c(const char *name,
   uint32_t magic;
   memcpy(&magic, base, 4);
   if (magic != 0x4D4F524Cu)
-    Rf_error("mori: not a list region");  /* GC reclaims shm_ptr via longjmp */
+    Rf_error("mori: invalid nested list region");  /* GC reclaims shm_ptr via longjmp */
 
   SEXP keeper = shm_ptr;
   unsigned char *cur_base = base;
@@ -1255,7 +1272,7 @@ static SEXP mori_open_path_c(const char *name,
     if (sexptype != VECSXP)
       Rf_error("mori: path step is not a nested list");
     if (mori_oob(data_offset, data_size, cur_region_size))
-      Rf_error("mori: nested region out of bounds");
+      Rf_error("mori: invalid nested region");
 
     /* Bare extptr: no ALTLIST wrapper, no attr restore (intermediate is
        never observed; only its index in the keeper chain matters). */
