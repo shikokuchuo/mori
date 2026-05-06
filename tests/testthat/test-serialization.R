@@ -167,6 +167,21 @@ test_that("string leaf beyond MORI_MAX_PATH falls back to materialization", {
   expect_identical(y[], c("alpha", "beta", "gamma"))
 })
 
+test_that("length-1 string leaf beyond MORI_MAX_PATH unserializes as-is", {
+  # Deep nesting forces Serialized_state to materialize; the resulting
+  # STRSXP-of-1 enters Unserialize's parse branch, parse fails (the literal
+  # "alpha" is not a mori identifier), and the fallthrough at the end of
+  # Unserialize returns it unchanged.
+  x <- "alpha"
+  for (i in seq_len(70)) x <- list(x)
+  sx <- share(x)
+  deep <- sx
+  for (i in seq_len(70)) deep <- deep[[1]]
+  expect_true(is_shared(deep))
+  y <- unserialize(serialize(deep, NULL))
+  expect_identical(y[], "alpha")
+})
+
 test_that("sub-list beyond MORI_MAX_PATH falls back to materialization", {
   x <- list(leaf = 1:3)
   for (i in seq_len(70)) x <- list(x)

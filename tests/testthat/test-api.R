@@ -198,12 +198,36 @@ test_that("map_shared rejects valid prefix with malformed path", {
   expect_null(map_shared(paste0(good, "[1]x")))         # trailing junk
   expect_null(map_shared(paste0(good, " [1]")))         # leading whitespace
   expect_null(map_shared(paste0(good, "[")))            # unclosed bracket
+  expect_null(map_shared(paste0(good, "[1!]")))         # bad delimiter after digit
+  expect_null(map_shared(paste0(good, "[1.5]")))        # non-int delimiter
+  expect_null(map_shared(paste0(good, "[1?2]")))        # non-comma between toks
+  # >64 indices: count exceeds MORI_MAX_PATH
+  expect_null(map_shared(paste0(
+    good, "[", paste(rep("1", 65), collapse = ","), "]"
+  )))
 })
 
 test_that("map_shared errors on valid identifier with bad path", {
   x <- share(list(a = 1:5))
   nm <- shared_name(x)
   expect_error(map_shared(paste0(nm, "[99]")), "out of bounds")
+})
+
+test_that("map_shared errors when intermediate path index is OOB", {
+  x <- share(list(a = 1:5, b = list(c = 1:5)))
+  nm <- shared_name(x)
+  expect_error(map_shared(paste0(nm, "[99,1]")), "out of bounds")
+})
+
+test_that("map_shared errors when path step is not a nested list", {
+  x <- share(list(a = 1:5, b = list(c = 1:5)))
+  nm <- shared_name(x)
+  # Element 1 (a) is atomic — descending into it must error
+  expect_error(map_shared(paste0(nm, "[1,1]")), "not a nested list")
+  # Element 2 of b is also atomic — verify the same at depth
+  expect_error(
+    map_shared(paste0(nm, "[2,1,1]")), "not a nested list"
+  )
 })
 
 test_that("path-form on missing region yields the same 'not found' error", {
@@ -248,4 +272,37 @@ test_that("is_shared/shared_name preserved after COW materialization", {
   expect_equal(x[1], 99)
   expect_true(is_shared(x))
   expect_identical(shared_name(x), nm)
+})
+
+test_that("shared_name returns '' for nesting beyond MORI_MAX_PATH", {
+  # Chain length > 64 forces mori_format_chain to overflow → "".
+  x <- 1:5
+  for (i in seq_len(70)) x <- list(x)
+  sx <- share(x)
+  deep <- sx
+  for (i in seq_len(70)) deep <- deep[[1]]
+  expect_true(is_shared(deep))
+  expect_identical(shared_name(deep), "")
+
+  # Same for a string leaf and an intermediate sub-list at depth.
+  xs <- letters
+  for (i in seq_len(70)) xs <- list(xs)
+  sxs <- share(xs)
+  deep_s <- sxs
+  for (i in seq_len(70)) deep_s <- deep_s[[1]]
+  expect_true(is_shared(deep_s))
+  expect_identical(shared_name(deep_s), "")
+
+  xl <- list(leaf = 1:3)
+  for (i in seq_len(70)) xl <- list(xl)
+  sxl <- share(xl)
+  deep_l <- sxl
+  for (i in seq_len(68)) deep_l <- deep_l[[1]]
+  expect_true(is_shared(deep_l))
+  expect_identical(shared_name(deep_l), "")
+})
+
+test_that("shared_name returns '' for a non-mori ALTREP", {
+  # A compact-seq ALTREP has no mori_owned_tag at data1 → blank.
+  expect_identical(shared_name(1:5), "")
 })
