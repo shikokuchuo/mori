@@ -1133,16 +1133,16 @@ static inline int32_t mori_index_of(SEXP x) {
 }
 
 SEXP mori_shm_name(SEXP x) {
-  if (!ALTREP(x)) return R_BlankScalarString;
+  if (!ALTREP(x)) return R_NilValue;
   SEXP d1 = R_altrep_data1(x);
   if (TYPEOF(d1) != EXTPTRSXP ||
       R_ExternalPtrTag(d1) != mori_owned_tag)
-    return R_BlankScalarString;
+    return R_NilValue;
 
   char buf[MORI_FORMAT_BUFLEN];
   if (mori_format_chain(R_ExternalPtrProtected(d1), mori_index_of(x),
                         buf, sizeof(buf)) != 0)
-    return R_BlankScalarString;
+    return R_NilValue;
   return Rf_mkString(buf);
 }
 

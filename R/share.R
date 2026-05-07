@@ -110,10 +110,10 @@ is_shared <- function(x) .Call(mori_is_shared, x)
 #'
 #' @param x a shared object as returned by [share()] or [map_shared()].
 #'
-#' @return A character string identifying the shared object, or the empty
-#'   string `""` if `x` is not a shared object. For a sub-list or element
-#'   extracted from a shared list, the string carries a bracketed 1-based
-#'   index path (e.g. `"/mori_abc_1[2,3]"`). [map_shared()] accepts both
+#' @return A character string identifying the shared object, or `NULL`
+#'   if `x` is not a shared object. For a sub-list or element extracted
+#'   from a shared list, the string carries a bracketed 1-based index
+#'   path (e.g. `"/mori_abc_1[2,3]"`). [map_shared()] accepts both
 #'   forms; the path-bearing form returns the addressed sub-object directly.
 #'   The OS-level SHM region name is the prefix before `[` and is
 #'   recoverable via `sub("\\[.*$", "", shared_name(x))`.

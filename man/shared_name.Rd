@@ -10,10 +10,10 @@ shared_name(x)
 \item{x}{a shared object as returned by \code{\link[=share]{share()}} or \code{\link[=map_shared]{map_shared()}}.}
 }
 \value{
-A character string identifying the shared object, or the empty
-string \code{""} if \code{x} is not a shared object. For a sub-list or element
-extracted from a shared list, the string carries a bracketed 1-based
-index path (e.g. \code{"/mori_abc_1[2,3]"}). \code{\link[=map_shared]{map_shared()}} accepts both
+A character string identifying the shared object, or \code{NULL}
+if \code{x} is not a shared object. For a sub-list or element extracted
+from a shared list, the string carries a bracketed 1-based index
+path (e.g. \code{"/mori_abc_1[2,3]"}). \code{\link[=map_shared]{map_shared()}} accepts both
 forms; the path-bearing form returns the addressed sub-object directly.
 The OS-level SHM region name is the prefix before \code{[} and is
 recoverable via \verb{sub("\\\[.*$", "", shared_name(x))}.
