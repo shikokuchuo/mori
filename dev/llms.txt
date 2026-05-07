@@ -101,7 +101,7 @@ bytes over a network.
 ### Sharing by name
 
 [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md)
-returns the SHM identifier of a shared object;
+returns the shared memory name of a shared object;
 [`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md)
 opens a region by that name — useful for handing a reference between
 processes without going through serialization:
@@ -111,7 +111,7 @@ processes without going through serialization:
 x <- share(rnorm(1e6))
 
 shared_name(x)
-#> [1] "/mori_abda_1"
+#> [1] "/mori_4d1b_1"
 
 # Another process — here the same one — can map the region by name
 y <- map_shared(shared_name(x))
@@ -147,7 +147,7 @@ lst <- share(list(a = rnorm(1e6), b = rnorm(1e6), c = rnorm(1e6)))
 
 # Each element arrives on the worker as a zero-copy reference
 mirai_map(lst, \(v) format(lobstr::obj_size(v)))[.flat] |> unique()
-#> [1] "840 B"
+#> [1] "904 B"
 
 daemons(0)
 ```
@@ -178,16 +178,16 @@ strings are accessed lazily per element.
 
 df <- share(as.data.frame(matrix(rnorm(1e7), ncol = 100)))
 shared_name(df)        # one region for all 100 columns
-#> [1] "/mori_abda_3"
+#> [1] "/mori_4d1b_3"
 shared_name(df[[50]])  # sub-path into the same region
-#> [1] "/mori_abda_3[50]"
+#> [1] "/mori_4d1b_3[50]"
 ```
 
 ### Lifetime
 
-Shared memory is managed by R’s garbage collector. The SHM region stays
-alive as long as any shared object backed by it remains referenced in R
-— the original returned by
+Shared memory is managed by R’s garbage collector. The shared memory
+region stays alive as long as any shared object backed by it remains
+referenced in R — the original returned by
 [`share()`](https://shikokuchuo.net/mori/dev/reference/share.md), or a
 column or sub-list extracted from it, in this or another process. When
 no references remain, the garbage collector frees the shared memory

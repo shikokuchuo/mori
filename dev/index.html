@@ -136,12 +136,12 @@
 <div class="section level3">
 <h3 id="sharing-by-name">Sharing by name<a class="anchor" aria-label="anchor" href="#sharing-by-name"></a>
 </h3>
-<p><code><a href="reference/shared_name.html">shared_name()</a></code> returns the SHM identifier of a shared object; <code><a href="reference/map_shared.html">map_shared()</a></code> opens a region by that name — useful for handing a reference between processes without going through serialization:</p>
+<p><code><a href="reference/shared_name.html">shared_name()</a></code> returns the shared memory name of a shared object; <code><a href="reference/map_shared.html">map_shared()</a></code> opens a region by that name — useful for handing a reference between processes without going through serialization:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">x</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/share.html">share</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">1e6</span><span class="op">)</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="reference/shared_name.html">shared_name</a></span><span class="op">(</span><span class="va">x</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] "/mori_abda_1"</span></span>
+<span><span class="co">#&gt; [1] "/mori_4d1b_1"</span></span>
 <span></span>
 <span><span class="co"># Another process — here the same one — can map the region by name</span></span>
 <span><span class="va">y</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/map_shared.html">map_shared</a></span><span class="op">(</span><span class="fu"><a href="reference/shared_name.html">shared_name</a></span><span class="op">(</span><span class="va">x</span><span class="op">)</span><span class="op">)</span></span>
@@ -165,7 +165,7 @@
 <span></span>
 <span><span class="co"># Each element arrives on the worker as a zero-copy reference</span></span>
 <span><span class="fu"><a href="https://mirai.r-lib.org/reference/mirai_map.html" class="external-link">mirai_map</a></span><span class="op">(</span><span class="va">lst</span>, \<span class="op">(</span><span class="va">v</span><span class="op">)</span> <span class="fu"><a href="https://rdrr.io/r/base/format.html" class="external-link">format</a></span><span class="op">(</span><span class="fu">lobstr</span><span class="fu">::</span><span class="fu"><a href="https://lobstr.r-lib.org/reference/obj_size.html" class="external-link">obj_size</a></span><span class="op">(</span><span class="va">v</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">[</span><span class="va">.flat</span><span class="op">]</span> <span class="op">|&gt;</span> <span class="fu"><a href="https://rdrr.io/r/base/unique.html" class="external-link">unique</a></span><span class="op">(</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] "840 B"</span></span>
+<span><span class="co">#&gt; [1] "904 B"</span></span>
 <span></span>
 <span><span class="fu"><a href="https://mirai.r-lib.org/reference/daemons.html" class="external-link">daemons</a></span><span class="op">(</span><span class="fl">0</span><span class="op">)</span></span></code></pre></div>
 </div>
@@ -186,14 +186,14 @@
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">df</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/share.html">share</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/as.data.frame.html" class="external-link">as.data.frame</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">1e7</span><span class="op">)</span>, ncol <span class="op">=</span> <span class="fl">100</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="reference/shared_name.html">shared_name</a></span><span class="op">(</span><span class="va">df</span><span class="op">)</span>        <span class="co"># one region for all 100 columns</span></span>
-<span><span class="co">#&gt; [1] "/mori_abda_3"</span></span>
+<span><span class="co">#&gt; [1] "/mori_4d1b_3"</span></span>
 <span><span class="fu"><a href="reference/shared_name.html">shared_name</a></span><span class="op">(</span><span class="va">df</span><span class="op">[[</span><span class="fl">50</span><span class="op">]</span><span class="op">]</span><span class="op">)</span>  <span class="co"># sub-path into the same region</span></span>
-<span><span class="co">#&gt; [1] "/mori_abda_3[50]"</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] "/mori_4d1b_3[50]"</span></span></code></pre></div>
 </div>
 <div class="section level3">
 <h3 id="lifetime">Lifetime<a class="anchor" aria-label="anchor" href="#lifetime"></a>
 </h3>
-<p>Shared memory is managed by R’s garbage collector. The SHM region stays alive as long as any shared object backed by it remains referenced in R — the original returned by <code><a href="reference/share.html">share()</a></code>, or a column or sub-list extracted from it, in this or another process. When no references remain, the garbage collector frees the shared memory automatically.</p>
+<p>Shared memory is managed by R’s garbage collector. The shared memory region stays alive as long as any shared object backed by it remains referenced in R — the original returned by <code><a href="reference/share.html">share()</a></code>, or a column or sub-list extracted from it, in this or another process. When no references remain, the garbage collector frees the shared memory automatically.</p>
 <p><strong>Important:</strong> Always assign the result of <code><a href="reference/share.html">share()</a></code> to a variable. The shared memory is kept alive by the R object reference — if the result is used temporarily (not assigned), the garbage collector may free the shared memory before a consumer process has mapped it.</p>
 </div>
 <div class="section level3">

@@ -31,8 +31,8 @@ restored on the consumer side. Character vectors use a packed layout and
 elements are materialised lazily on access. When serialised (e.g. by
 [`serialize()`](https://rdrr.io/r/base/serialize.html) or across a
 [`mirai()`](https://mirai.r-lib.org/reference/mirai.html) call), a
-shared object is represented compactly by its SHM name (~30 bytes)
-rather than by its contents.
+shared object is represented compactly by its shared memory name (~30
+bytes) rather than by its contents.
 
 The shared memory region is managed automatically. It stays alive as
 long as the returned object (or any element extracted from it) is
@@ -51,10 +51,10 @@ shared memory before a consumer process has mapped it.
 ## Persistence
 
 Direct [`saveRDS()`](https://rdrr.io/r/base/readRDS.html) of a shared
-object writes only the SHM name, so the resulting file is meaningful
-only on the same machine while the region is still alive. For portable
-storage or transport across machines, materialise into a regular
-in-memory copy first with
+object writes only the shared memory name, so the resulting file is
+meaningful only on the same machine while the region is still alive. For
+portable storage or transport across machines, materialise into a
+regular in-memory copy first with
 [`rlang::duplicate()`](https://rlang.r-lib.org/reference/duplicate.html),
 which deep-duplicates the object:
 
@@ -65,7 +65,7 @@ which deep-duplicates the object:
 [`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md)
 to open a shared region by name,
 [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md)
-to extract the SHM name.
+to extract the shared memory name.
 
 ## Examples
 

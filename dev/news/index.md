@@ -10,6 +10,9 @@
   (e.g. `/mori_abc_1[2,3]`).
 - Wire-format change (breaking): The serialization format and the shared
   memory region naming scheme have both changed.
+- [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md)
+  now returns `NULL` for non-shared inputs (previously the empty string
+  `""`); `shared_name(x) %||% ""` retains the previous behaviour.
 - [`share()`](https://shikokuchuo.net/mori/dev/reference/share.md) on
   Linux fails with a clean R error when `/dev/shm` is too small (typical
   in containers, where the limit can be raised at start) instead of

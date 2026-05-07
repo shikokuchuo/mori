@@ -51,6 +51,8 @@
 <code><a href="../reference/shared_name.html">shared_name()</a></code> and <code><a href="../reference/map_shared.html">map_shared()</a></code> now round-trip for sub-lists and extracted elements, not just whole shared objects. Sub-object identifiers carry a bracketed index path (e.g. <code>/mori_abc_1[2,3]</code>).</li>
 <li>Wire-format change (breaking): The serialization format and the shared memory region naming scheme have both changed.</li>
 <li>
+<code><a href="../reference/shared_name.html">shared_name()</a></code> now returns <code>NULL</code> for non-shared inputs (previously the empty string <code>""</code>); <code>shared_name(x) %||% ""</code> retains the previous behaviour.</li>
+<li>
 <code><a href="../reference/share.html">share()</a></code> on Linux fails with a clean R error when <code>/dev/shm</code> is too small (typical in containers, where the limit can be raised at start) instead of SIGBUS-ing mid-serialize (<a href="https://github.com/shikokuchuo/mori/issues/14" class="external-link">#14</a>).</li>
 <li>
 <code><a href="../reference/map_shared.html">map_shared()</a></code> on Linux no longer prefaults the whole region, restoring lazy first-touch access to match macOS.</li>

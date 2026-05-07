@@ -63,26 +63,25 @@ ALTREP-backed R object that reads directly from shared memory.</p>
 
 
 <dl><dt id="arg-name">name<a class="anchor" aria-label="anchor" href="#arg-name"></a></dt>
-<dd><p>a character string identifier as returned by
-<code><a href="shared_name.html">shared_name()</a></code>: either a bare SHM region name (opens the root) or a
-region name with a 1-based bracketed index path (e.g.
-<code>"/mori_abc_1[2,3]"</code>, opens the addressed sub-list or element
-directly).</p></dd>
+<dd><p>a character string as returned by <code><a href="shared_name.html">shared_name()</a></code>: either a
+bare shared memory name (opens the root) or a name with a 1-based
+bracketed index path (e.g. <code>"/mori_abc_1[2,3]"</code>, opens the addressed
+sub-list or element directly).</p></dd>
 
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
     <p>The R object stored at the named region (or sub-object at the
-given path), or <code>NULL</code> if <code>name</code> is not a valid shared memory
-identifier (wrong type, length, <code>NA</code>, missing or malformed prefix,
-or malformed bracketed path). If <code>name</code> parses as a valid identifier
-but the region is absent or corrupted — or the path indexes out of
-bounds or through a non-list step — an error is raised.</p>
+given path), or <code>NULL</code> if <code>name</code> is not a valid shared memory name
+(wrong type, length, <code>NA</code>, missing or malformed prefix, or malformed
+bracketed path). If <code>name</code> parses as valid but the region is absent or
+corrupted — or the path doesn't address a valid sub-object — an error
+is raised.</p>
     </div>
     <div class="section level2">
     <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a></h2>
-    <div class="dont-index"><p><code><a href="share.html">share()</a></code> to create a shared object, <code><a href="shared_name.html">shared_name()</a></code> to
-extract the name.</p></div>
+    <div class="dont-index"><p><code><a href="share.html">share()</a></code> to create a shared object, <code><a href="shared_name.html">shared_name()</a></code> to extract
+the shared memory name.</p></div>
     </div>
 
     <div class="section level2">

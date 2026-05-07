@@ -1,6 +1,6 @@
 # Extract Shared Memory Name
 
-Extract the SHM region name from a shared object. This name can be
+Extract the shared memory name from a shared object. This name can be
 passed to
 [`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md)
 to open the same region in another process.
@@ -21,14 +21,15 @@ shared_name(x)
 
 ## Value
 
-A character string identifying the shared object, or the empty string
-`""` if `x` is not a shared object. For a sub-list or element extracted
-from a shared list, the string carries a bracketed 1-based index path
-(e.g. `"/mori_abc_1[2,3]"`).
+A character string identifying the shared object, or `NULL` if `x` is
+not a shared object. For a sub-list or element extracted from a shared
+list, the string carries a bracketed 1-based index path (e.g.
+`"/mori_abc_1[2,3]"`).
 [`map_shared()`](https://shikokuchuo.net/mori/dev/reference/map_shared.md)
-accepts both forms; the path-bearing form returns the addressed
-sub-object directly. The OS-level SHM region name is the prefix before
-`[` and is recoverable via `sub("\\[.*$", "", shared_name(x))`.
+accepts both forms; the path-qualified form returns the addressed
+sub-object directly. The underlying shared memory region name is the
+prefix before `[` and is recoverable via
+`sub("\\[.*$", "", shared_name(x))`.
 
 ## See also
 
@@ -40,5 +41,5 @@ to open a shared region by name.
 ``` r
 x <- share(rnorm(100))
 shared_name(x)
-#> [1] "/mori_1a3a_3"
+#> [1] "/mori_18e8_3"
 ```
