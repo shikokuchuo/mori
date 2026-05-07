@@ -9,38 +9,35 @@
 #'   attributes such as names, dim, class, or levels) and lists or data
 #'   frames whose elements are such vectors, an ALTREP-backed object that
 #'   reads directly from shared memory. For any other object (environments,
-#'   closures, language objects, `NULL`), the input is returned
-#'   unchanged with no shared memory region created.
+#'   closures, language objects, `NULL`), the input is returned unchanged
+#'   with no shared memory region created.
 #'
 #' @details
-#' Attributes are stored alongside the data in the shared memory region
-#' and restored on the consumer side. Character vectors use a packed
-#' layout and elements are materialised lazily on access. When serialised
-#' (e.g. by [serialize()] or across a `mirai()` call), a
-#' shared object is represented compactly by its SHM name (~30 bytes)
-#' rather than by its contents.
+#' Attributes are stored alongside the data in the shared memory region and
+#' restored on the consumer side. Character vectors use a packed layout and
+#' elements are materialised lazily on access. When serialised (e.g. by
+#' [serialize()] or across a `mirai()` call), a shared object is represented
+#' compactly by its shared memory name (~30 bytes) rather than by its
+#' contents.
 #'
-#' The shared memory region is managed automatically. It stays alive as
-#' long as the returned object (or any element extracted from it) is
-#' referenced in R, and is freed by the garbage collector when no
-#' references remain.
+#' The shared memory region is managed automatically. It stays alive as long
+#' as the returned object (or any element extracted from it) is referenced
+#' in R, and is freed by the garbage collector when no references remain.
 #'
-#' `share()` is idempotent: calling it on an object that is already
-#' backed by shared memory returns the input unchanged without
-#' allocating a new region.
+#' `share()` is idempotent: calling it on an object that is already backed by
+#' shared memory returns the input unchanged without allocating a new region.
 #'
-#' **Important**: always assign the result of `share()` to a
-#' variable. The shared memory is kept alive by the R object reference —
-#' if the result is used as a temporary (not assigned), the garbage
-#' collector may free the shared memory before a consumer process has
-#' mapped it.
+#' **Important**: always assign the result of `share()` to a variable. The
+#' shared memory is kept alive by the R object reference — if the result is
+#' used as a temporary (not assigned), the garbage collector may free the
+#' shared memory before a consumer process has mapped it.
 #'
 #' @section Persistence:
-#' Direct [saveRDS()] of a shared object writes only the SHM name, so
-#' the resulting file is meaningful only on the same machine while the
-#' region is still alive. For portable storage or transport across
-#' machines, materialise into a regular in-memory copy first with
-#' `rlang::duplicate()`, which deep-duplicates the object:
+#' Direct [saveRDS()] of a shared object writes only the shared memory name,
+#' so the resulting file is meaningful only on the same machine while the
+#' region is still alive. For portable storage or transport across machines,
+#' materialise into a regular in-memory copy first with `rlang::duplicate()`,
+#' which deep-duplicates the object:
 #'
 #' ```r
 #' saveRDS(rlang::duplicate(x), file = "x.rds")
@@ -51,7 +48,7 @@
 #' sum(x)
 #'
 #' @seealso [map_shared()] to open a shared region by name,
-#'   [shared_name()] to extract the SHM name.
+#'   [shared_name()] to extract the shared memory name.
 #'
 #' @export
 share <- function(x) .Call(mori_create, x)
@@ -61,18 +58,17 @@ share <- function(x) .Call(mori_create, x)
 #' Open a shared memory region identified by a name string and return an
 #' ALTREP-backed R object that reads directly from shared memory.
 #'
-#' @param name a character string identifier as returned by
-#'   [shared_name()]: either a bare SHM region name (opens the root) or a
-#'   region name with a 1-based bracketed index path (e.g.
-#'   `"/mori_abc_1[2,3]"`, opens the addressed sub-list or element
-#'   directly).
+#' @param name a character string as returned by [shared_name()]: either a
+#'   bare shared memory name (opens the root) or a name with a 1-based
+#'   bracketed index path (e.g. `"/mori_abc_1[2,3]"`, opens the addressed
+#'   sub-list or element directly).
 #'
 #' @return The R object stored at the named region (or sub-object at the
-#'   given path), or `NULL` if `name` is not a valid shared memory
-#'   identifier (wrong type, length, `NA`, missing or malformed prefix,
-#'   or malformed bracketed path). If `name` parses as a valid identifier
-#'   but the region is absent or corrupted — or the path indexes out of
-#'   bounds or through a non-list step — an error is raised.
+#'   given path), or `NULL` if `name` is not a valid shared memory name
+#'   (wrong type, length, `NA`, missing or malformed prefix, or malformed
+#'   bracketed path). If `name` parses as valid but the region is absent or
+#'   corrupted — or the path doesn't address a valid sub-object — an error
+#'   is raised.
 #'
 #' @examples
 #' x <- share(1:100)
@@ -80,8 +76,8 @@ share <- function(x) .Call(mori_create, x)
 #' y <- map_shared(nm)
 #' sum(y)
 #'
-#' @seealso [share()] to create a shared object, [shared_name()] to
-#'   extract the name.
+#' @seealso [share()] to create a shared object, [shared_name()] to extract
+#'   the shared memory name.
 #'
 #' @export
 map_shared <- function(name) .Call(mori_shm_open_and_wrap, name)
@@ -105,17 +101,17 @@ is_shared <- function(x) .Call(mori_is_shared, x)
 
 #' Extract Shared Memory Name
 #'
-#' Extract the SHM region name from a shared object. This name can be
+#' Extract the shared memory name from a shared object. This name can be
 #' passed to [map_shared()] to open the same region in another process.
 #'
 #' @param x a shared object as returned by [share()] or [map_shared()].
 #'
-#' @return A character string identifying the shared object, or the empty
-#'   string `""` if `x` is not a shared object. For a sub-list or element
-#'   extracted from a shared list, the string carries a bracketed 1-based
-#'   index path (e.g. `"/mori_abc_1[2,3]"`). [map_shared()] accepts both
-#'   forms; the path-bearing form returns the addressed sub-object directly.
-#'   The OS-level SHM region name is the prefix before `[` and is
+#' @return A character string identifying the shared object, or `NULL` if
+#'   `x` is not a shared object. For a sub-list or element extracted from a
+#'   shared list, the string carries a bracketed 1-based index path (e.g.
+#'   `"/mori_abc_1[2,3]"`). [map_shared()] accepts both forms; the
+#'   path-qualified form returns the addressed sub-object directly. The
+#'   underlying shared memory region name is the prefix before `[` and is
 #'   recoverable via `sub("\\[.*$", "", shared_name(x))`.
 #'
 #' @examples

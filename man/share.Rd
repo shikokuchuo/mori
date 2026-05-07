@@ -14,43 +14,40 @@ For atomic vectors (including character vectors and those with
 attributes such as names, dim, class, or levels) and lists or data
 frames whose elements are such vectors, an ALTREP-backed object that
 reads directly from shared memory. For any other object (environments,
-closures, language objects, \code{NULL}), the input is returned
-unchanged with no shared memory region created.
+closures, language objects, \code{NULL}), the input is returned unchanged
+with no shared memory region created.
 }
 \description{
 Write an R object into shared memory and return a version that other
 processes on the same machine can map without copying.
 }
 \details{
-Attributes are stored alongside the data in the shared memory region
-and restored on the consumer side. Character vectors use a packed
-layout and elements are materialised lazily on access. When serialised
-(e.g. by \code{\link[=serialize]{serialize()}} or across a \code{mirai()} call), a
-shared object is represented compactly by its SHM name (~30 bytes)
-rather than by its contents.
+Attributes are stored alongside the data in the shared memory region and
+restored on the consumer side. Character vectors use a packed layout and
+elements are materialised lazily on access. When serialised (e.g. by
+\code{\link[=serialize]{serialize()}} or across a \code{mirai()} call), a shared object is represented
+compactly by its shared memory name (~30 bytes) rather than by its
+contents.
 
-The shared memory region is managed automatically. It stays alive as
-long as the returned object (or any element extracted from it) is
-referenced in R, and is freed by the garbage collector when no
-references remain.
+The shared memory region is managed automatically. It stays alive as long
+as the returned object (or any element extracted from it) is referenced
+in R, and is freed by the garbage collector when no references remain.
 
-\code{share()} is idempotent: calling it on an object that is already
-backed by shared memory returns the input unchanged without
-allocating a new region.
+\code{share()} is idempotent: calling it on an object that is already backed by
+shared memory returns the input unchanged without allocating a new region.
 
-\strong{Important}: always assign the result of \code{share()} to a
-variable. The shared memory is kept alive by the R object reference —
-if the result is used as a temporary (not assigned), the garbage
-collector may free the shared memory before a consumer process has
-mapped it.
+\strong{Important}: always assign the result of \code{share()} to a variable. The
+shared memory is kept alive by the R object reference — if the result is
+used as a temporary (not assigned), the garbage collector may free the
+shared memory before a consumer process has mapped it.
 }
 \section{Persistence}{
 
-Direct \code{\link[=saveRDS]{saveRDS()}} of a shared object writes only the SHM name, so
-the resulting file is meaningful only on the same machine while the
-region is still alive. For portable storage or transport across
-machines, materialise into a regular in-memory copy first with
-\code{rlang::duplicate()}, which deep-duplicates the object:
+Direct \code{\link[=saveRDS]{saveRDS()}} of a shared object writes only the shared memory name,
+so the resulting file is meaningful only on the same machine while the
+region is still alive. For portable storage or transport across machines,
+materialise into a regular in-memory copy first with \code{rlang::duplicate()},
+which deep-duplicates the object:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{saveRDS(rlang::duplicate(x), file = "x.rds")
 }\if{html}{\out{</div>}}
@@ -63,5 +60,5 @@ sum(x)
 }
 \seealso{
 \code{\link[=map_shared]{map_shared()}} to open a shared region by name,
-\code{\link[=shared_name]{shared_name()}} to extract the SHM name.
+\code{\link[=shared_name]{shared_name()}} to extract the shared memory name.
 }

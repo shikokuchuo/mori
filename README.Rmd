@@ -101,7 +101,7 @@ Workers must run on the same machine — mori shares physical RAM, not bytes ove
 
 ### Sharing by name
 
-`shared_name()` returns the SHM identifier of a shared object; `map_shared()` opens a region by that name — useful for handing a reference between processes without going through serialization:
+`shared_name()` returns the shared memory name of a shared object; `map_shared()` opens a region by that name — useful for handing a reference between processes without going through serialization:
 
 ```{r}
 #| label: by-name
@@ -165,7 +165,7 @@ shared_name(df[[50]])  # sub-path into the same region
 ### Lifetime
 
 Shared memory is managed by R's garbage collector.
-The SHM region stays alive as long as any shared object backed by it remains referenced in R — the original returned by `share()`, or a column or sub-list extracted from it, in this or another process.
+The shared memory region stays alive as long as any shared object backed by it remains referenced in R — the original returned by `share()`, or a column or sub-list extracted from it, in this or another process.
 When no references remain, the garbage collector frees the shared memory automatically.
 
 **Important:** Always assign the result of `share()` to a variable.

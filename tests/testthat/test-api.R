@@ -33,15 +33,15 @@ test_that("shared_name returns a non-empty string for shared objects", {
   expect_true(is.character(shared_name(s)))
 })
 
-test_that("shared_name returns '' for non-shared inputs", {
-  expect_identical(shared_name(1:10), "")
-  expect_identical(shared_name(NULL), "")
-  expect_identical(shared_name(list(a = 1)), "")
-  expect_identical(shared_name("a"), "")
+test_that("shared_name returns NULL for non-shared inputs", {
+  expect_null(shared_name(1:10))
+  expect_null(shared_name(NULL))
+  expect_null(shared_name(list(a = 1)))
+  expect_null(shared_name("a"))
 
   s <- share(letters)
   nm <- shared_name(s)
-  expect_identical(shared_name(nm), "")
+  expect_null(shared_name(nm))
 })
 
 test_that("map_shared returns NULL on malformed input", {
@@ -55,7 +55,7 @@ test_that("map_shared returns NULL on malformed input", {
   expect_null(map_shared(list("a")))
 })
 
-test_that("map_shared composes with shared_name sentinel without tryCatch", {
+test_that("map_shared composes with shared_name on non-shared input", {
   expect_null(map_shared(shared_name(1:10)))
 })
 
@@ -274,15 +274,15 @@ test_that("is_shared/shared_name preserved after COW materialization", {
   expect_identical(shared_name(x), nm)
 })
 
-test_that("shared_name returns '' for nesting beyond MORI_MAX_PATH", {
-  # Chain length > 64 forces mori_format_chain to overflow → "".
+test_that("shared_name returns NULL for nesting beyond MORI_MAX_PATH", {
+  # Chain length > 64 forces mori_format_chain to overflow → NULL.
   x <- 1:5
   for (i in seq_len(70)) x <- list(x)
   sx <- share(x)
   deep <- sx
   for (i in seq_len(70)) deep <- deep[[1]]
   expect_true(is_shared(deep))
-  expect_identical(shared_name(deep), "")
+  expect_null(shared_name(deep))
 
   # Same for a string leaf and an intermediate sub-list at depth.
   xs <- letters
@@ -291,7 +291,7 @@ test_that("shared_name returns '' for nesting beyond MORI_MAX_PATH", {
   deep_s <- sxs
   for (i in seq_len(70)) deep_s <- deep_s[[1]]
   expect_true(is_shared(deep_s))
-  expect_identical(shared_name(deep_s), "")
+  expect_null(shared_name(deep_s))
 
   xl <- list(leaf = 1:3)
   for (i in seq_len(70)) xl <- list(xl)
@@ -299,10 +299,10 @@ test_that("shared_name returns '' for nesting beyond MORI_MAX_PATH", {
   deep_l <- sxl
   for (i in seq_len(68)) deep_l <- deep_l[[1]]
   expect_true(is_shared(deep_l))
-  expect_identical(shared_name(deep_l), "")
+  expect_null(shared_name(deep_l))
 })
 
-test_that("shared_name returns '' for a non-mori ALTREP", {
-  # A compact-seq ALTREP has no mori_owned_tag at data1 → blank.
-  expect_identical(shared_name(1:5), "")
+test_that("shared_name returns NULL for a non-mori ALTREP", {
+  # A compact-seq ALTREP has no mori_owned_tag at data1 → NULL.
+  expect_null(shared_name(1:5))
 })
