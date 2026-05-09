@@ -1,3 +1,5 @@
+# mori (development version)
+
 # mori 0.2.0
 
 * Wire-format change (breaking): The serialization format and the shared memory region naming scheme have both changed.
