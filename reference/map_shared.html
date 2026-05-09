@@ -9,7 +9,7 @@ ALTREP-backed R object that reads directly from shared memory."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">mori</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -44,7 +44,7 @@ ALTREP-backed R object that reads directly from shared memory."></head><body>
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Open Shared Memory by Name</h1>
-      <small class="dont-index">Source: <a href="https://github.com/shikokuchuo/mori/blob/release/R/share.R" class="external-link"><code>R/share.R</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/shikokuchuo/mori/blob/main/R/share.R" class="external-link"><code>R/share.R</code></a></small>
       <div class="d-none name"><code>map_shared.Rd</code></div>
     </div>
 
@@ -63,21 +63,25 @@ ALTREP-backed R object that reads directly from shared memory.</p>
 
 
 <dl><dt id="arg-name">name<a class="anchor" aria-label="anchor" href="#arg-name"></a></dt>
-<dd><p>a character string name identifying the shared memory
-region, as returned by <code><a href="shared_name.html">shared_name()</a></code>.</p></dd>
+<dd><p>a character string as returned by <code><a href="shared_name.html">shared_name()</a></code>: either a
+bare shared memory name (opens the root) or a name with a 1-based
+bracketed index path (e.g. <code>"/mori_abc_1[2,3]"</code>, opens the addressed
+sub-list or element directly).</p></dd>
 
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
-    <p>The R object stored in the shared memory region, or <code>NULL</code> if
-<code>name</code> is not a valid shared memory name (wrong type, length, <code>NA</code>,
-or missing the <code>mori</code> prefix). If <code>name</code> is well-formed but the
-region is absent or corrupted, an error is raised.</p>
+    <p>The R object stored at the named region (or sub-object at the
+given path), or <code>NULL</code> if <code>name</code> is not a valid shared memory name
+(wrong type, length, <code>NA</code>, missing or malformed prefix, or malformed
+bracketed path). If <code>name</code> parses as valid but the region is absent or
+corrupted — or the path doesn't address a valid sub-object — an error
+is raised.</p>
     </div>
     <div class="section level2">
     <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a></h2>
-    <div class="dont-index"><p><code><a href="share.html">share()</a></code> to create a shared object, <code><a href="shared_name.html">shared_name()</a></code> to
-extract the name.</p></div>
+    <div class="dont-index"><p><code><a href="share.html">share()</a></code> to create a shared object, <code><a href="shared_name.html">shared_name()</a></code> to extract
+the shared memory name.</p></div>
     </div>
 
     <div class="section level2">
