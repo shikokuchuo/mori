@@ -18,5 +18,7 @@ development:
   mode: auto
 news:
   releases:
+  - text: "mori 0.2.0"
+    href: https://opensource.posit.co/blog/2026-05-12_production-async-r/
   - text: "mori 0.1.0"
     href: https://opensource.posit.co/blog/2026-04-23_mori-0-1-0/
