@@ -21,6 +21,7 @@ passed to map_shared() to open the same region in another process."><meta name="
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-news" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">News</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-news"><li><h6 class="dropdown-header" data-toc-skip>Releases</h6></li>
+    <li><a class="external-link dropdown-item" href="https://opensource.posit.co/blog/2026-05-12_production-async-r/">mori 0.2.0</a></li>
     <li><a class="external-link dropdown-item" href="https://opensource.posit.co/blog/2026-04-23_mori-0-1-0/">mori 0.1.0</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../news/index.html">Changelog</a></li>
@@ -85,7 +86,7 @@ recoverable via <code>sub("\\[.*$", "", shared_name(x))</code>.</p>
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="va">x</span> <span class="op">&lt;-</span> <span class="fu"><a href="share.html">share</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">100</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu">shared_name</span><span class="op">(</span><span class="va">x</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "/mori_19dc_3"</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "/mori_19eb_3"</span>
 <span class="r-in"><span></span></span>
 </code></pre></div>
     </div>
