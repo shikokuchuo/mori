@@ -122,3 +122,61 @@ is_shared <- function(x) .Call(mori_is_shared, x)
 #'
 #' @export
 shared_name <- function(x) .Call(mori_shm_name, x)
+
+#' Unlink Shared Memory Regions
+#'
+#' Remove shared memory regions created by [share()]. Pass one or more region
+#' names to remove specific regions, or call with no arguments to reap
+#' *orphaned* regions: those whose creating process has died without cleaning
+#' up, for example after a crash, a `SIGKILL`, or the out-of-memory killer.
+#'
+#' @param name a character vector of shared memory names as returned by
+#'   [shared_name()], or `NULL` (the default) to reap orphaned regions. A
+#'   sub-object path (e.g. `"/mori_abc_1[2,3]"`) is accepted and resolves to
+#'   its underlying region. Names that are not valid mori identifiers are
+#'   ignored.
+#'
+#' @details
+#' Shared memory is normally managed automatically: a region is unlinked when
+#' the [share()] object that owns it is garbage-collected, and on a clean R
+#' session exit. A region is only left behind if the owning process is killed
+#' before either can run. `unlink_shared()` removes such leftovers.
+#'
+#' Unlinking a region removes only its name. Processes that have already mapped
+#' it keep reading until they release it; the memory is freed once the last
+#' mapping is gone.
+#'
+#' The reap form (`name = NULL`) is **conservative**: a region is removed only
+#' if its creating process — encoded in the region name — is no longer
+#' running, so regions still in use by a live process are never touched.
+#'
+#' @section Platform behaviour:
+#' \describe{
+#'   \item{Linux}{Both forms are supported; reaping enumerates `/dev/shm`.}
+#'   \item{macOS}{Removal by name is supported. Reaping is not: the kernel
+#'     shared memory namespace cannot be enumerated, so names must be passed
+#'     explicitly.}
+#'   \item{Windows}{Nothing is removed. A file mapping is reference-counted by
+#'     the operating system and cannot be orphaned, so there is no leftover to
+#'     clean up.}
+#' }
+#'
+#' @return Invisibly, a character vector of the region names that were
+#'   removed, or `NULL` if nothing was removed.
+#'
+#' @examples
+#' x <- share(rnorm(100))
+#' nm <- shared_name(x)
+#' rm(x)
+#' unlink_shared(nm)
+#'
+#' @seealso [share()] to create a shared object, [shared_name()] to extract a
+#'   region name.
+#'
+#' @export
+unlink_shared <- function(name = NULL) {
+  !is.null(name) &&
+    !is.character(name) &&
+    stop("`name` must be a character vector or NULL.")
+  invisible(.Call(mori_unlink, name))
+}
