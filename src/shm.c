@@ -210,7 +210,7 @@ char **mori_shm_reap(int *n, int *supported) {
       list = grown;
       cap = ncap;
     }
-    size_t len = strlen(shm_name) + 1;
+    size_t len = (size_t) wn + 1;              /* wn == strlen(shm_name) */
     char *copy = malloc(len);
     if (copy == NULL) break;
     memcpy(copy, shm_name, len);

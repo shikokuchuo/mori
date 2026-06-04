@@ -1190,6 +1190,10 @@ SEXP mori_unlink(SEXP name) {
     UNPROTECT(1);
     return R_NilValue;
   }
+  if (removed == n) {                          /* all removed: no trim needed */
+    UNPROTECT(1);
+    return out;
+  }
   SEXP trimmed = Rf_xlengthgets(out, removed); /* keep only those removed */
   UNPROTECT(1);
   return trimmed;
