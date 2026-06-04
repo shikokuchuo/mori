@@ -1,5 +1,8 @@
 # mori (development version)
 
+* New `unlink_shared()` removes shared memory regions by name, or all regions orphaned by a process that was killed before it could clean up (#25).
+* `share()` now retries with a fresh name on a region name collision instead of failing, so we can skip over any orphaned regions left by a previous process that reused the same process ID (common in containers).
+
 # mori 0.2.0
 
 * Wire-format change (breaking): The serialization format and the shared memory region naming scheme have both changed.

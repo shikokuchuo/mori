@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-mori — Shared Memory for R Objects. Uses POSIX shared memory (Linux, macOS) and Win32 file mappings (Windows) with R's ALTREP framework to let multiple processes on the same machine read the same physical memory pages. No external dependencies. Requires R >= 4.3.0 (for ALTLIST). API: `share()` → ALTREP shared object, `map_shared()` → open SHM by name, `shared_name()` → extract identifier, `is_shared()` → test if shared. ALTREP serialization hooks emit the `shared_name()` identifier as the wire form — transparent under `serialize()` and `mirai`.
+mori — Shared Memory for R Objects. Uses POSIX shared memory (Linux, macOS) and Win32 file mappings (Windows) with R's ALTREP framework to let multiple processes on the same machine read the same physical memory pages. No external dependencies. Requires R >= 4.3.0 (for ALTLIST). API: `share()` → ALTREP shared object, `map_shared()` → open SHM by name, `shared_name()` → extract identifier, `is_shared()` → test if shared, `unlink_shared()` → remove regions by name or reap orphans of dead processes. ALTREP serialization hooks emit the `shared_name()` identifier as the wire form — transparent under `serialize()` and `mirai`.
 
 ## Development Commands
 
@@ -42,7 +42,7 @@ devtools::document()
 
 ## Concurrency Model
 
-mori is **write-once on host, read-many on consumers, COW for any mutation.** Each `share()` allocates a new SHM region with a unique name; existing regions are never mutated. The host writes the full region inside `mori_create` before returning, and consumers obtain the name only after that call returns — partial writes are not observable. Consumer mappings are read-only (`PROT_READ` / `FILE_MAP_READ`); mutations trigger COW into private memory. No locking is implemented or required; any future change admitting in-place mutation breaks this model.
+mori is **write-once on host, read-many on consumers, COW for any mutation.** Each `share()` allocates a new SHM region with a unique name; existing regions are never mutated. The name embeds the creator PID (`mori_<pid>_<counter>`); `mori_shm_create` opens with `O_EXCL` (POSIX) / checks `ERROR_ALREADY_EXISTS` (Windows) and, on a name collision with an orphan left by a crashed same-PID process, bumps the counter and retries (`MORI_CREATE_RETRIES`). The host writes the full region inside `mori_create` before returning, and consumers obtain the name only after that call returns — partial writes are not observable. Consumer mappings are read-only (`PROT_READ` / `FILE_MAP_READ`); mutations trigger COW into private memory. No locking is implemented or required; any future change admitting in-place mutation breaks this model.
 
 ## share() Dispatch (`altrep.c: mori_create`)
 
@@ -164,16 +164,16 @@ SHM lifetime is fully automatic via chained external pointer finalizers. Three i
 ### src/
 
 - **mori.h** — types (`mori_shm`, `mori_buf`, `mori_vec` with `index` field, `mori_list_view`), declarations, `MORI_ALIGN64`, `mori_sizeof_elt`, and the identifier grammar constants (`MORI_NAME_MAX`, `MORI_MAX_PATH`, `MORI_IDENTIFIER_MAX`, `MORI_FORMAT_BUFLEN`, `MORI_PREFIX_LITERAL`).
-- **shm.c** — platform SHM create/open/close + finalizers for both sides.
+- **shm.c** — platform SHM create/open/close + finalizers for both sides; `mori_shm_unlink_name` (unlink-by-name, all POSIX) and `mori_shm_reap` (Linux: enumerate `/dev/shm`, classify by the PID in each name via `mori_pid_alive`, unlink dead-PID orphans; macOS/Windows: unsupported, returns `*supported = 0`).
 - **serialize.c** — `mori_serialize_count`, `mori_serialize_into`, `mori_unserialize_from`. Used for fallback (non-zero-copy) ALTLIST entries where directory `sexptype == 0`.
 - **altrep.c** — all ALTREP class definitions, `mori_create` dispatcher, recursive writers (`mori_nested_size` / `mori_nested_write`), consumer open+wrap (`mori_shm_open_and_wrap`), path open (`mori_open_path_c`), view constructors (`mori_make_view_extptr` for bare keeper-chain extptrs, `mori_make_list_view` for full ALTLIST + attrs), identity/name (`mori_is_shared` / `mori_shm_name`), identifier formatter / parser (`mori_format_chain` / `mori_parse_identifier`), serialization hooks, `mori_altrep_init`.
-- **init.c** — `R_init_mori`, `.Call` registration table (4 entries: `mori_create`, `mori_shm_open_and_wrap`, `mori_is_shared`, `mori_shm_name`).
+- **init.c** — `R_init_mori`, `.Call` registration table (5 entries: `mori_create`, `mori_shm_open_and_wrap`, `mori_is_shared`, `mori_shm_name`, `mori_unlink`).
 
 `.Call` names match C function names; all entry points take a single `SEXP`.
 
 ### R/
 
-`mori-package.R` (package docs) and `share.R` (four `.Call` wrappers — dispatch and error handling are at the C level).
+`mori-package.R` (package docs) and `share.R` (five `.Call` wrappers — dispatch and error handling are at the C level; `unlink_shared()` additionally validates input type, delegating removal to `mori_unlink`, which returns `NULL` when nothing was removed).
 
 ## Testing
 

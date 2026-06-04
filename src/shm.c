@@ -2,6 +2,12 @@
 #include <stdio.h>
 #include "mori.h"
 
+/* Retry bound for mori_shm_create on a name collision. A process that reuses a
+   PID after an unclean exit (common in containers) restarts the per-process
+   name counter at 0 and can collide with an orphan left by the dead process;
+   bump the counter and retry rather than fail. */
+#define MORI_CREATE_RETRIES 256
+
 // Platform-specific SHM implementations --------------------------------------
 
 #ifdef _WIN32
@@ -21,15 +27,22 @@ int mori_shm_create(mori_shm *shm, size_t size) {
   shm->addr = NULL;
   shm->size = 0;
   shm->handle = NULL;
-  shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
 
   DWORD hi = (DWORD) ((uint64_t) size >> 32);
   DWORD lo = (DWORD) (size & 0xFFFFFFFF);
 
-  HANDLE h = CreateFileMappingA(
-    INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, hi, lo, shm->name
-  );
-  if (h == NULL) return -1;
+  HANDLE h = NULL;
+  for (int attempt = 0; attempt < MORI_CREATE_RETRIES; attempt++) {
+    shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
+    h = CreateFileMappingA(
+      INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, hi, lo, shm->name
+    );
+    if (h == NULL) return -1;
+    if (GetLastError() != ERROR_ALREADY_EXISTS) break;
+    CloseHandle(h);                          /* opened a pre-existing region */
+    h = NULL;
+  }
+  if (h == NULL) return -1;                /* exhausted retries */
 
   void *addr = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, size);
   if (addr == NULL) {
@@ -80,12 +93,27 @@ void mori_shm_close(mori_shm *shm, int unlink) {
   shm->handle = NULL;
 }
 
+/* A Win32 file mapping lives only while a handle to it is open, so it cannot
+   outlive its creator: there is no persistent name to remove and no orphan to
+   reap. Both entry points are no-ops. */
+int mori_shm_unlink_name(const char *name) {
+  (void) name;
+  return -1;
+}
+
+char **mori_shm_reap(int *n, int *supported) {
+  *n = 0;
+  *supported = 0;
+  return NULL;
+}
+
 #else /* POSIX */
 
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 
 #ifndef MAP_POPULATE
 #define MAP_POPULATE 0
@@ -120,6 +148,90 @@ static int mori_shm_os_unlink(const char *name) {
 
 #endif
 
+/* Public unlink-by-name for unlink_shared(). Returns 0 on success, -1 on
+   failure (e.g. the region is absent). */
+int mori_shm_unlink_name(const char *name) {
+  return mori_shm_os_unlink(name);
+}
+
+#ifdef __linux__
+
+#include <signal.h>
+#include <dirent.h>
+
+static int mori_pid_alive(pid_t pid) {
+  if (pid <= 0) return 1;             /* never treat as reapable */
+  if (kill(pid, 0) == 0) return 1;    /* exists and signalable */
+  return errno == EPERM;              /* exists but owned by another user */
+}
+
+/* Reap orphaned mori regions whose creating process is no longer alive. The
+   creator PID is encoded in every region name (mori_<pid>_<counter>), so
+   /dev/shm can be enumerated and classified without any external bookkeeping.
+   Unlinks each dead-PID region and returns the names removed (the "/mori_..."
+   form) as a malloc'd array of *n malloc'd strings; the caller frees each
+   element and the array. *supported is set to 1. Returns NULL with *n == 0
+   if nothing was reaped. */
+char **mori_shm_reap(int *n, int *supported) {
+  *n = 0;
+  *supported = 1;
+
+  DIR *dir = opendir("/dev/shm");
+  if (dir == NULL) return NULL;
+
+  const char *disk_prefix = &MORI_PREFIX_LITERAL[1];  /* skip the leading '/' */
+  const size_t disk_prefix_len = strlen(disk_prefix);
+
+  char **list = NULL;
+  size_t cap = 0, count = 0;
+
+  struct dirent *ent;
+  while ((ent = readdir(dir)) != NULL) {
+    const char *fname = ent->d_name;
+    if (strncmp(fname, disk_prefix, disk_prefix_len) != 0) continue;
+
+    const char *pid_str = fname + disk_prefix_len;
+    char *end;
+    long pid = strtol(pid_str, &end, 16);
+    if (end == pid_str || *end != '_') continue;    /* not <pid>_<counter> */
+    if (mori_pid_alive((pid_t) pid)) continue;       /* creator still alive */
+
+    /* shm name = "/" + on-disk name */
+    char shm_name[MORI_NAME_MAX];
+    int wn = snprintf(shm_name, sizeof(shm_name), "/%s", fname);
+    if (wn <= 0 || (size_t) wn >= sizeof(shm_name)) continue;
+
+    if (mori_shm_os_unlink(shm_name) != 0) continue;  /* gone already / race */
+
+    if (count == cap) {
+      size_t ncap = cap ? cap * 2 : 8;
+      char **grown = realloc(list, ncap * sizeof(*list));
+      if (grown == NULL) break;                       /* OOM: return so far */
+      list = grown;
+      cap = ncap;
+    }
+    size_t len = strlen(shm_name) + 1;
+    char *copy = malloc(len);
+    if (copy == NULL) break;
+    memcpy(copy, shm_name, len);
+    list[count++] = copy;
+  }
+  closedir(dir);
+
+  *n = (int) count;
+  return list;
+}
+
+#else /* macOS / other POSIX: the SHM namespace cannot be enumerated */
+
+char **mori_shm_reap(int *n, int *supported) {
+  *n = 0;
+  *supported = 0;
+  return NULL;
+}
+
+#endif
+
 static size_t mori_shm_name(char *name, size_t size) {
   static unsigned int counter = 0;
   int n = snprintf(name, size, MORI_PREFIX_LITERAL "%x_%x",
@@ -131,10 +243,15 @@ int mori_shm_create(mori_shm *shm, size_t size) {
 
   shm->addr = NULL;
   shm->size = 0;
-  shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
 
-  int fd = mori_shm_os_open(shm->name, O_CREAT | O_EXCL | O_RDWR, 0600);
-  if (fd < 0) return -1;
+  int fd = -1;
+  for (int attempt = 0; attempt < MORI_CREATE_RETRIES; attempt++) {
+    shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
+    fd = mori_shm_os_open(shm->name, O_CREAT | O_EXCL | O_RDWR, 0600);
+    if (fd >= 0) break;
+    if (errno != EEXIST) return -1;       /* a real failure, not a collision */
+  }
+  if (fd < 0) return -1;                   /* exhausted retries */
 
   if (ftruncate(fd, (off_t) size) != 0) {
     close(fd);

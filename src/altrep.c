@@ -1146,6 +1146,55 @@ SEXP mori_shm_name(SEXP x) {
   return Rf_mkString(buf);
 }
 
+/* Unlink shared memory regions by name, or (name == R_NilValue) reap regions
+   orphaned by a dead creating process. Returns the character vector of region
+   names actually removed, or R_NilValue if nothing was removed — including the
+   reap path on platforms that cannot enumerate the SHM namespace (macOS,
+   Windows). Only names matching the mori identifier grammar are ever unlinked,
+   so unrelated names are silently ignored; a bracketed sub-object path
+   resolves to its underlying region. */
+SEXP mori_unlink(SEXP name) {
+
+  if (name == R_NilValue) {
+    int n = 0, supported = 0;
+    char **list = mori_shm_reap(&n, &supported);
+    if (!supported || n == 0) return R_NilValue;   /* list is NULL when n == 0 */
+    SEXP out = PROTECT(Rf_allocVector(STRSXP, n));
+    for (int i = 0; i < n; i++) {
+      SET_STRING_ELT(out, i, Rf_mkChar(list[i]));
+      free(list[i]);
+    }
+    free(list);
+    UNPROTECT(1);
+    return out;
+  }
+
+  if (TYPEOF(name) != STRSXP) return R_NilValue;
+
+  R_xlen_t n = XLENGTH(name);
+  SEXP out = PROTECT(Rf_allocVector(STRSXP, n));
+  R_xlen_t removed = 0;
+  char shm_name[MORI_NAME_MAX];
+  int32_t path[MORI_MAX_PATH];
+  int path_len = 0;
+  for (R_xlen_t i = 0; i < n; i++) {
+    SEXP elt = STRING_ELT(name, i);
+    if (elt == NA_STRING) continue;
+    if (mori_parse_identifier(CHAR(elt), shm_name, sizeof(shm_name),
+                              path, &path_len) < 0)
+      continue;                                  /* not a mori name: ignore */
+    if (mori_shm_unlink_name(shm_name) == 0)
+      SET_STRING_ELT(out, removed++, Rf_mkChar(shm_name));
+  }
+  if (removed == 0) {
+    UNPROTECT(1);
+    return R_NilValue;
+  }
+  SEXP trimmed = Rf_xlengthgets(out, removed); /* keep only those removed */
+  UNPROTECT(1);
+  return trimmed;
+}
+
 // ALTREP serialization hooks --------------------------------------------------
 
 /* All three Serialized_state methods emit the same string form as
