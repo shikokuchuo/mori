@@ -1,4 +1,3 @@
-#include <errno.h>
 #include <stdlib.h>
 #include "mori.h"
 
@@ -874,17 +873,31 @@ static size_t mori_nested_write(unsigned char *base, SEXP x) {
   return cur;
 }
 
-/* Raise an R error for an SHM creation failure. ENOSPC means the kernel
-   reported the region could not be backed (typically /dev/shm full in a
-   container with the default 64 MB cap); other failures are generic. */
-static void mori_shm_create_failed(int rc) {
-  if (rc == ENOSPC)
-    Rf_error(
-      "mori: failed to create shared memory: out of space.\n"
-      "  Shared memory is provisioned at the OS or container level. In\n"
-      "  containers, raise it at start (e.g. `docker run --shm-size=2g ...`)."
-    );
-  Rf_error("mori: failed to create shared memory");
+/* Format a byte count as a human-readable size (1024-based). */
+static void mori_format_bytes(size_t n, char *buf, size_t buflen) {
+  static const char *unit[] = {"bytes", "KB", "MB", "GB", "TB", "PB"};
+  if (n < 1024) {
+    snprintf(buf, buflen, "%llu bytes", (unsigned long long) n);
+    return;
+  }
+  double v = (double) n;
+  int u = 0;
+  while (v >= 1024.0 && u < 5) {
+    v /= 1024.0;
+    u++;
+  }
+  snprintf(buf, buflen, "%.1f %s", v, unit[u]);
+}
+
+/* Raise an R error for an SHM creation failure, composing the requested size
+   with the category's summary and optional remediation hint. */
+static void mori_shm_create_failed(int category, size_t requested) {
+  char sizebuf[32];
+  const char *summary, *hint;
+  mori_format_bytes(requested, sizebuf, sizeof(sizebuf));
+  mori_err_describe(category, &summary, &hint);
+  Rf_error("mori: cannot create region (requested %s): %s%s%s",
+           sizebuf, summary, hint[0] != '\0' ? ". " : "", hint);
 }
 
 /* Write list/data frame to SHM (with transparent nested VECSXP) */
@@ -901,7 +914,7 @@ static SEXP mori_shm_create_list_call(SEXP x) {
 
   mori_shm *shm;
   int rc = mori_shm_create_heap(&shm, total);
-  if (rc != 0) mori_shm_create_failed(rc);
+  if (rc) mori_shm_create_failed(rc, total);
 
   mori_nested_write((unsigned char *) shm->addr, x);
 
@@ -923,7 +936,7 @@ static SEXP mori_shm_create_vector_call(SEXP x) {
 
   mori_shm *shm;
   int rc = mori_shm_create_heap(&shm, total);
-  if (rc != 0) mori_shm_create_failed(rc);
+  if (rc) mori_shm_create_failed(rc, total);
 
   unsigned char *base = (unsigned char *) shm->addr;
 
@@ -960,7 +973,7 @@ static SEXP mori_shm_create_string_call(SEXP x) {
 
   mori_shm *shm;
   int rc = mori_shm_create_heap(&shm, total);
-  if (rc != 0) mori_shm_create_failed(rc);
+  if (rc) mori_shm_create_failed(rc, total);
 
   unsigned char *base = (unsigned char *) shm->addr;
 
