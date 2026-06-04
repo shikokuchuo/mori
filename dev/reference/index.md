@@ -13,3 +13,5 @@
   Create a Shared Object
 - [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md)
   : Extract Shared Memory Name
+- [`unlink_shared()`](https://shikokuchuo.net/mori/dev/reference/unlink_shared.md)
+  : Unlink Shared Memory Regions

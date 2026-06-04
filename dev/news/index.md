@@ -2,6 +2,16 @@
 
 ## mori (development version)
 
+- New
+  [`unlink_shared()`](https://shikokuchuo.net/mori/dev/reference/unlink_shared.md)
+  removes shared memory regions by name, or all regions orphaned by a
+  process that was killed before it could clean up
+  ([\#25](https://github.com/shikokuchuo/mori/issues/25)).
+- [`share()`](https://shikokuchuo.net/mori/dev/reference/share.md) now
+  retries with a fresh name on a region name collision instead of
+  failing, so we can skip over any orphaned regions left by a previous
+  process that reused the same process ID (common in containers).
+
 ## mori 0.2.0
 
 CRAN release: 2026-05-09
