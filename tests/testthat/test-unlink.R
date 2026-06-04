@@ -88,13 +88,12 @@ test_that("unlink_shared() (reap) returns NULL on macOS", {
 
 test_that("unlink_shared() (reap) removes a dead process's orphan", {
   linux_only()
-  skip_if_not_installed("parallel")
 
-  # Run a child to exit so its PID is dead, then fabricate an orphan named for
-  # that PID. The reaper classifies purely by the PID in the name, so this
+  # Spawn a short-lived shell, capture its PID, and let R reap it (system()
+  # waits before returning) so the PID is dead. Fabricate an orphan named for
+  # that PID; the reaper classifies purely by the PID in the name, so this
   # exercises the dead-PID branch deterministically.
-  p <- parallel::mcparallel(Sys.getpid())
-  dead_pid <- parallel::mccollect(p)[[1]]
+  dead_pid <- as.integer(system("echo $$", intern = TRUE))
 
   orphan <- sprintf("/dev/shm/mori_%x_0", dead_pid)
   shm_name <- sprintf("/mori_%x_0", dead_pid)
