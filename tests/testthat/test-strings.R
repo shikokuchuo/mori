@@ -102,3 +102,12 @@ test_that("duplicated works on string ALTREP", {
   y <- map_shared(shared_name(x))
   expect_identical(duplicated(y), c(FALSE, FALSE, TRUE))
 })
+
+test_that("order() materializes string ALTREP and re-reads the private copy", {
+  v <- c("delta", "alpha", "gamma", "beta")
+  y <- map_shared(shared_name(share(v)))
+  expect_identical(order(y), order(v))
+  expect_length(y, 4L)
+  expect_identical(y[[1]], "delta")
+  expect_identical(y[], v)
+})
