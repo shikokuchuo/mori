@@ -52,6 +52,18 @@ typedef struct mori_list_view_s {
   int32_t index;             /* -1 = root, >= 0 = sub-list */
 } mori_list_view;
 
+/* Outcome of an SHM creation attempt: MORI_OK on success, otherwise a
+   portable failure category. The platform layer classifies errno /
+   GetLastError into one of these; mori_err_describe supplies the user-facing
+   summary and remediation hint. */
+enum {
+  MORI_OK = 0,
+  MORI_ERR_NOSPACE,         /* ENOSPC / ERROR_DISK_FULL */
+  MORI_ERR_NOMEM,           /* ENOMEM / commit limit exceeded */
+  MORI_ERR_NAME_COLLISION,  /* unique name not found within retries */
+  MORI_ERR_OTHER
+};
+
 // shm.c -----------------------------------------------------------------------
 
 int mori_shm_create(mori_shm *shm, size_t size);
@@ -63,6 +75,7 @@ void mori_shm_finalizer(SEXP ptr);
 void mori_host_finalizer(SEXP ptr);
 int mori_shm_unlink_name(const char *name);
 char **mori_shm_reap(int *n, int *supported);
+void mori_err_describe(int category, const char **summary, const char **hint);
 
 // serialize.c -----------------------------------------------------------------
 

@@ -15,6 +15,23 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#define MORI_HINT_NOSPACE \
+  "Free disk space backing the system paging file."
+
+static int mori_err_classify(long code) {
+  switch ((DWORD) code) {
+  case ERROR_DISK_FULL:
+    return MORI_ERR_NOSPACE;
+  case ERROR_NOT_ENOUGH_MEMORY:
+  case ERROR_OUTOFMEMORY:
+  case ERROR_COMMITMENT_LIMIT:
+  case ERROR_NO_SYSTEM_RESOURCES:
+    return MORI_ERR_NOMEM;
+  default:
+    return MORI_ERR_OTHER;
+  }
+}
+
 static size_t mori_shm_name(char *name, size_t size) {
   static unsigned int counter = 0;
   int n = snprintf(name, size, MORI_PREFIX_LITERAL "%lx_%x",
@@ -37,23 +54,24 @@ int mori_shm_create(mori_shm *shm, size_t size) {
     h = CreateFileMappingA(
       INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, hi, lo, shm->name
     );
-    if (h == NULL) return -1;
+    if (h == NULL) return mori_err_classify((long) GetLastError());
     if (GetLastError() != ERROR_ALREADY_EXISTS) break;
     CloseHandle(h);                          /* opened a pre-existing region */
     h = NULL;
   }
-  if (h == NULL) return -1;                /* exhausted retries */
+  if (h == NULL) return MORI_ERR_NAME_COLLISION;
 
   void *addr = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, size);
   if (addr == NULL) {
+    long code = (long) GetLastError();       /* CloseHandle would clobber it */
     CloseHandle(h);
-    return -1;
+    return mori_err_classify(code);
   }
 
   shm->addr = addr;
   shm->size = size;
   shm->handle = h;
-  return 0;
+  return MORI_OK;
 }
 
 int mori_shm_open(mori_shm *shm, const char *name) {
@@ -118,6 +136,21 @@ char **mori_shm_reap(int *n, int *supported) {
 #ifndef MAP_POPULATE
 #define MAP_POPULATE 0
 #endif
+
+#define MORI_HINT_NOSPACE \
+  "Shared memory is provisioned at the OS or container level; in containers, " \
+  "raise it at start (e.g. `docker run --shm-size=2g ...`)."
+
+static int mori_err_classify(long code) {
+  switch ((int) code) {
+  case ENOSPC:
+    return MORI_ERR_NOSPACE;
+  case ENOMEM:
+    return MORI_ERR_NOMEM;
+  default:
+    return MORI_ERR_OTHER;
+  }
+}
 
 /* Linux: go through /dev/shm directly to avoid the -lrt link dependency
    that shm_open/shm_unlink would introduce. macOS has them in libc. */
@@ -239,6 +272,15 @@ static size_t mori_shm_name(char *name, size_t size) {
   return (n > 0 && (size_t) n < size) ? (size_t) n : 0;
 }
 
+/* Tear down a partially-created region and return the failure category for
+   `code`. Callers pass errno (or posix_fallocate's return) directly: it is
+   read as an argument before close/unlink run, which would clobber errno. */
+static int mori_create_fail(int fd, const char *name, int code) {
+  close(fd);
+  mori_shm_os_unlink(name);
+  return mori_err_classify(code);
+}
+
 int mori_shm_create(mori_shm *shm, size_t size) {
 
   shm->addr = NULL;
@@ -249,36 +291,28 @@ int mori_shm_create(mori_shm *shm, size_t size) {
     shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
     fd = mori_shm_os_open(shm->name, O_CREAT | O_EXCL | O_RDWR, 0600);
     if (fd >= 0) break;
-    if (errno != EEXIST) return -1;       /* a real failure, not a collision */
+    if (errno != EEXIST)                    /* a real failure, not a collision */
+      return mori_err_classify(errno);
   }
-  if (fd < 0) return -1;                   /* exhausted retries */
+  if (fd < 0) return MORI_ERR_NAME_COLLISION;
 
-  if (ftruncate(fd, (off_t) size) != 0) {
-    close(fd);
-    mori_shm_os_unlink(shm->name);
-    return -1;
-  }
+  if (ftruncate(fd, (off_t) size) != 0)
+    return mori_create_fail(fd, shm->name, errno);
 
 #ifdef __linux__
   /* Reserve tmpfs pages now: ftruncate leaves the file sparse and tmpfs
      only allocates on write fault — SIGBUS if /dev/shm is full. (MAP_POPULATE
      alone won't help: read prefault on a hole resolves to the shared zero
      page without allocating.) posix_fallocate returns errno directly. */
-  int err = posix_fallocate(fd, 0, (off_t) size);
-  if (err != 0) {
-    close(fd);
-    mori_shm_os_unlink(shm->name);
-    return err;
-  }
+  int ferr = posix_fallocate(fd, 0, (off_t) size);
+  if (ferr != 0)
+    return mori_create_fail(fd, shm->name, ferr);
 #endif
 
   void *addr = mmap(NULL, size, PROT_READ | PROT_WRITE,
                      MAP_SHARED | MAP_POPULATE, fd, 0);
-  if (addr == MAP_FAILED) {
-    close(fd);
-    mori_shm_os_unlink(shm->name);
-    return -1;
-  }
+  if (addr == MAP_FAILED)
+    return mori_create_fail(fd, shm->name, errno);
 
   close(fd);
 
@@ -291,7 +325,7 @@ int mori_shm_create(mori_shm *shm, size_t size) {
 
   shm->addr = addr;
   shm->size = size;
-  return 0;
+  return MORI_OK;
 }
 
 int mori_shm_open(mori_shm *shm, const char *name) {
@@ -346,23 +380,46 @@ void mori_shm_close(mori_shm *shm, int unlink) {
 
 #endif /* _WIN32 */
 
+// Platform-independent error rendering ---------------------------------------
+
+/* Map a failure category to a user-facing summary and an actionable
+   platform-specific remediation hint ("" where the summary suffices). The
+   caller composes these into its error message. */
+void mori_err_describe(int category, const char **summary, const char **hint) {
+  *hint = "";
+  switch (category) {
+  case MORI_ERR_NOSPACE:
+    *summary = "out of space";
+    *hint = MORI_HINT_NOSPACE;
+    break;
+  case MORI_ERR_NOMEM:
+    *summary = "not enough memory";
+    break;
+  case MORI_ERR_NAME_COLLISION:
+    *summary = "could not find a free region name after repeated retries";
+    break;
+  default:
+    *summary = "an unexpected error occurred";
+    break;
+  }
+}
+
 // Platform-independent heap-allocating variants ------------------------------
 
 /* Malloc a mori_shm and create the SHM region into it. On success returns
-   0 and writes the new region into *out; on failure leaks nothing, sets
-   *out to NULL, and returns the create status: a positive errno from
-   posix_fallocate (e.g. ENOSPC), or -1 for other failures. */
+   MORI_OK and writes the new region into *out; on failure leaks nothing,
+   sets *out to NULL, and returns the failure category. */
 int mori_shm_create_heap(mori_shm **out, size_t size) {
   *out = NULL;
   mori_shm *shm = malloc(sizeof(mori_shm));
-  if (shm == NULL) return -1;
+  if (shm == NULL) return MORI_ERR_NOMEM;
   int rc = mori_shm_create(shm, size);
-  if (rc != 0) {
+  if (rc != MORI_OK) {
     free(shm);
     return rc;
   }
   *out = shm;
-  return 0;
+  return MORI_OK;
 }
 
 /* Malloc a mori_shm and open an existing SHM region into it. */

@@ -2,6 +2,7 @@
 
 * New `unlink_shared()` removes shared memory regions by name, or all regions orphaned by a process that was killed before it could clean up (#25).
 * `share()` now retries with a fresh name on a region name collision instead of failing, so we can skip over any orphaned regions left by a previous process that reused the same process ID (common in containers).
+* When `share()` fails to create a shared memory region it now reports the requested size and, where applicable, an actionable hint (e.g. raising a container's `/dev/shm` limit) instead of a generic message (#29).
 
 # mori 0.2.0
 

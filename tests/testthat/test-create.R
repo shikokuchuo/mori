@@ -25,3 +25,31 @@ test_that("share() retries past a colliding orphaned region name", {
   expect_false(identical(shared_name(y), collide_name))
   expect_true(file.exists(collide)) # the occupying orphan was left untouched
 })
+
+# When every candidate name is taken share() exhausts its retries and must
+# surface the real create-failure message (envelope + requested size + the
+# platform-error description). This is the one creation failure we can trigger
+# deterministically; like the test above it relies on file-backed /dev/shm.
+test_that("share() reports a helpful error when it cannot find a free name", {
+  if (Sys.info()[["sysname"]] != "Linux")
+    skip("requires file-backed /dev/shm (Linux only)")
+
+  x <- share(1:10)
+  nm <- shared_name(x) # "/mori_<pid>_<counter>"
+  parts <- regmatches(nm, regexec("^/mori_([0-9a-f]+)_([0-9a-f]+)$", nm))[[1]]
+  expect_length(parts, 3L)
+  pid_hex <- parts[2]
+  next_counter <- strtoi(parts[3], 16L) + 1L
+
+  # Occupy every name the next share() would try (MORI_CREATE_RETRIES = 256,
+  # counter incremented per attempt) so each O_EXCL create collides.
+  counters <- next_counter + seq_len(256L) - 1L
+  occupied <- sprintf("/dev/shm/mori_%s_%x", pid_hex, counters)
+  file.create(occupied)
+  defer(unlink(occupied))
+
+  expect_error(
+    share(1:10),
+    "cannot create region.*free region name"
+  )
+})
