@@ -51,6 +51,7 @@
 <ul><li>New <code><a href="../reference/unlink_shared.html">unlink_shared()</a></code> removes shared memory regions by name, or all regions orphaned by a process that was killed before it could clean up (<a href="https://github.com/shikokuchuo/mori/issues/25" class="external-link">#25</a>).</li>
 <li>
 <code><a href="../reference/share.html">share()</a></code> now retries with a fresh name on a region name collision instead of failing, so we can skip over any orphaned regions left by a previous process that reused the same process ID (common in containers).</li>
+<li>When <code><a href="../reference/share.html">share()</a></code> fails to create a shared memory region it now reports the requested size and, where applicable, an actionable hint (e.g. raising a container’s <code>/dev/shm</code> limit) instead of a generic message (<a href="https://github.com/shikokuchuo/mori/issues/29" class="external-link">#29</a>).</li>
 </ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.0" id="mori-020">mori 0.2.0<a class="anchor" aria-label="anchor" href="#mori-020"></a></h2><p class="text-muted">CRAN release: 2026-05-09</p>

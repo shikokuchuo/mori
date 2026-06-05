@@ -362,7 +362,14 @@ for sub-objects.
   sides; `mori_shm_unlink_name` (unlink-by-name, all POSIX) and
   `mori_shm_reap` (Linux: enumerate `/dev/shm`, classify by the PID in
   each name via `mori_pid_alive`, unlink dead-PID orphans;
-  macOS/Windows: unsupported, returns `*supported = 0`).
+  macOS/Windows: unsupported, returns `*supported = 0`). Also the
+  cross-platform error path: `mori_err_classify` (static; native errno /
+  GetLastError → portable `MORI_ERR_*` category) and `mori_err_describe`
+  (category summary + platform remediation hint). `mori_shm_create` /
+  `mori_shm_create_heap` return `MORI_OK` or a failure category
+  directly; the native code is classified **before** any
+  `close`/`unlink`/`CloseHandle` (those clobber `errno` /
+  `GetLastError`).
 - **serialize.c** — `mori_serialize_count`, `mori_serialize_into`,
   `mori_unserialize_from`. Used for fallback (non-zero-copy) ALTLIST
   entries where directory `sexptype == 0`.
@@ -373,7 +380,10 @@ for sub-objects.
   extptrs, `mori_make_list_view` for full ALTLIST + attrs),
   identity/name (`mori_is_shared` / `mori_shm_name`), identifier
   formatter / parser (`mori_format_chain` / `mori_parse_identifier`),
-  serialization hooks, `mori_altrep_init`.
+  serialization hooks, `mori_altrep_init`. The create-failure message
+  lives in `mori_shm_create_failed`, which composes the requested size
+  (`mori_format_bytes`) with `mori_err_describe`’s summary + hint into a
+  single `Rf_error`.
 - **init.c** — `R_init_mori`, `.Call` registration table (5 entries:
   `mori_create`, `mori_shm_open_and_wrap`, `mori_is_shared`,
   `mori_shm_name`, `mori_unlink`).
