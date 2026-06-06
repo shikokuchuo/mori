@@ -181,16 +181,16 @@ static int mori_shm_os_open(const char *name, int flags, mode_t mode) {
 
 #ifdef __APPLE__
 
-/* macOS has no enumerable SHM namespace (no /dev/shm; a dead creator's region is
-   invisible to ipcs/lsof yet still holds memory), so to support reaping mori
+/* macOS has no enumerable SHM namespace (no /dev/shm), so to support reaping mori
    keeps its own registry: one empty marker file per region under a per-user dir,
-   named like the region without the leading '/'. Created with the region and
-   removed with it (mori_shm_os_unlink), so both leak together on an unclean death
-   and reaping clears both. All marker ops are best-effort — failure forfeits only
-   reapability, never the region. */
+   named like the region without the leading '/'. Created and removed with the
+   region, so both leak together on an unclean death and reaping clears both. All
+   marker ops are best-effort — a failure forfeits only reapability. */
 
-/* Per-user marker directory "<temp>/mori", created on first use and cached. Uses
-   $TMPDIR first so it matches R's Sys.getenv("TMPDIR"); NULL if unavailable. */
+/* Per-user marker dir "<temp>/mori", resolved once and cached. Builds the path
+   but never creates it (mori_marker_create's job), so resolving for a remove or
+   reap never leaves an empty dir behind. $TMPDIR first to match R's
+   Sys.getenv("TMPDIR"); NULL if unresolvable. */
 static const char *mori_marker_dir(void) {
   static char dir[PATH_MAX];
   static int resolved = 0;            /* 0 = untried, 1 = valid, -1 = failed */
@@ -215,7 +215,6 @@ static const char *mori_marker_dir(void) {
 
   int n = snprintf(dir, sizeof(dir), "%s/mori", base);
   if (n <= 0 || (size_t) n >= sizeof(dir)) return NULL;
-  if (mkdir(dir, 0700) != 0 && errno != EEXIST) return NULL;
   resolved = 1;
   return dir;
 }
@@ -231,6 +230,11 @@ static void mori_marker_create(const char *shm_name) {
   char path[PATH_MAX];
   if (mori_marker_path(shm_name, path, sizeof(path)) != 0) return;
   int fd = open(path, O_CREAT | O_WRONLY, 0600);
+  if (fd < 0 && errno == ENOENT) {         /* dir absent: create it and retry */
+    const char *dir = mori_marker_dir();
+    if (dir != NULL) mkdir(dir, 0700);
+    fd = open(path, O_CREAT | O_WRONLY, 0600);
+  }
   if (fd >= 0) close(fd);                  /* empty: the name carries the PID */
 }
 
@@ -238,6 +242,8 @@ static void mori_marker_remove(const char *shm_name) {
   char path[PATH_MAX];
   if (mori_marker_path(shm_name, path, sizeof(path)) != 0) return;
   unlink(path);
+  const char *dir = mori_marker_dir();
+  if (dir != NULL) rmdir(dir);             /* prune the dir once empty */
 }
 
 #endif /* __APPLE__ */
