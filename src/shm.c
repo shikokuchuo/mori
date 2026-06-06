@@ -119,9 +119,8 @@ int mori_shm_unlink_name(const char *name) {
   return -1;
 }
 
-char **mori_shm_reap(int *n, int *supported) {
+char **mori_shm_reap(int *n) {
   *n = 0;
-  *supported = 0;
   return NULL;
 }
 
@@ -132,9 +131,14 @@ char **mori_shm_reap(int *n, int *supported) {
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <limits.h>
 
 #ifndef MAP_POPULATE
 #define MAP_POPULATE 0
+#endif
+
+#ifndef PATH_MAX
+#define PATH_MAX 1024
 #endif
 
 #define MORI_HINT_NOSPACE \
@@ -175,8 +179,81 @@ static int mori_shm_os_open(const char *name, int flags, mode_t mode) {
   return shm_open(name, flags, mode);
 }
 
+#ifdef __APPLE__
+
+/* macOS has no enumerable SHM namespace (no /dev/shm), so to support reaping mori
+   keeps its own registry: one empty marker file per region under a per-user dir,
+   named like the region without the leading '/'. Created and removed with the
+   region, so both leak together on an unclean death and reaping clears both. All
+   marker ops are best-effort — a failure forfeits only reapability. */
+
+/* Per-user marker dir "<temp>/mori", resolved once and cached. Builds the path
+   but never creates it (mori_marker_create's job), so resolving for a remove or
+   reap never leaves an empty dir behind. $TMPDIR first to match R's
+   Sys.getenv("TMPDIR"); NULL if unresolvable. */
+static const char *mori_marker_dir(void) {
+  static char dir[PATH_MAX];
+  static int resolved = 0;            /* 0 = untried, 1 = valid, -1 = failed */
+  if (resolved) return resolved > 0 ? dir : NULL;
+  resolved = -1;
+
+  char base[PATH_MAX];
+  const char *tmp = getenv("TMPDIR");
+  if (tmp != NULL && tmp[0] != '\0') {
+    int bn = snprintf(base, sizeof(base), "%s", tmp);
+    if (bn <= 0 || (size_t) bn >= sizeof(base)) return NULL;
+  } else {
+    size_t len = confstr(_CS_DARWIN_USER_TEMP_DIR, base, sizeof(base));
+    if (len == 0 || len > sizeof(base)) {
+      int bn = snprintf(base, sizeof(base), "%s", "/tmp");
+      if (bn <= 0 || (size_t) bn >= sizeof(base)) return NULL;
+    }
+  }
+
+  size_t bl = strlen(base);
+  while (bl > 1 && base[bl - 1] == '/') base[--bl] = '\0';   /* avoid "//mori" */
+
+  int n = snprintf(dir, sizeof(dir), "%s/mori", base);
+  if (n <= 0 || (size_t) n >= sizeof(dir)) return NULL;
+  resolved = 1;
+  return dir;
+}
+
+static int mori_marker_path(const char *shm_name, char *out, size_t outsize) {
+  const char *dir = mori_marker_dir();
+  if (dir == NULL) return -1;
+  int n = snprintf(out, outsize, "%s/%s", dir, shm_name + 1);  /* skip '/' */
+  return (n > 0 && (size_t) n < outsize) ? 0 : -1;
+}
+
+static void mori_marker_create(const char *shm_name) {
+  char path[PATH_MAX];
+  if (mori_marker_path(shm_name, path, sizeof(path)) != 0) return;
+  int fd = open(path, O_CREAT | O_WRONLY, 0600);
+  if (fd < 0 && errno == ENOENT) {         /* dir absent: create it and retry */
+    const char *dir = mori_marker_dir();
+    if (dir != NULL) mkdir(dir, 0700);
+    fd = open(path, O_CREAT | O_WRONLY, 0600);
+  }
+  if (fd >= 0) close(fd);                  /* empty: the name carries the PID */
+}
+
+static void mori_marker_remove(const char *shm_name) {
+  char path[PATH_MAX];
+  if (mori_marker_path(shm_name, path, sizeof(path)) != 0) return;
+  unlink(path);
+  const char *dir = mori_marker_dir();
+  if (dir != NULL) rmdir(dir);             /* prune the dir once empty */
+}
+
+#endif /* __APPLE__ */
+
 static int mori_shm_os_unlink(const char *name) {
-  return shm_unlink(name);
+  int r = shm_unlink(name);
+#ifdef __APPLE__
+  mori_marker_remove(name);            /* drop the marker in lockstep */
+#endif
+  return r;
 }
 
 #endif
@@ -187,7 +264,7 @@ int mori_shm_unlink_name(const char *name) {
   return mori_shm_os_unlink(name);
 }
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 
 #include <signal.h>
 #include <dirent.h>
@@ -198,22 +275,26 @@ static int mori_pid_alive(pid_t pid) {
   return errno == EPERM;              /* exists but owned by another user */
 }
 
-/* Reap orphaned mori regions whose creating process is no longer alive. The
-   creator PID is encoded in every region name (mori_<pid>_<counter>), so
-   /dev/shm can be enumerated and classified without any external bookkeeping.
-   Unlinks each dead-PID region and returns the names removed (the "/mori_..."
-   form) as a malloc'd array of *n malloc'd strings; the caller frees each
-   element and the array. *supported is set to 1. Returns NULL with *n == 0
-   if nothing was reaped. */
-char **mori_shm_reap(int *n, int *supported) {
+/* Reap orphans of dead creators by scanning a directory of mori region names —
+   /dev/shm entries on Linux, mori's marker files on macOS — and unlinking the
+   region behind each name whose creator PID (mori_<pid>_<counter>) is dead.
+   Returns the removed names ("/mori_..." form) as a malloc'd array of *n malloc'd
+   strings (caller frees each, then the array); NULL / *n == 0 if none. */
+char **mori_shm_reap(int *n) {
   *n = 0;
-  *supported = 1;
 
-  DIR *dir = opendir("/dev/shm");
+#ifdef __linux__
+  const char *scan_dir = "/dev/shm";          /* the kernel's own registry */
+#else
+  const char *scan_dir = mori_marker_dir();   /* mori's marker registry */
+  if (scan_dir == NULL) return NULL;          /* marker dir unavailable */
+#endif
+
+  DIR *dir = opendir(scan_dir);
   if (dir == NULL) return NULL;
 
-  const char *disk_prefix = &MORI_PREFIX_LITERAL[1];  /* skip the leading '/' */
-  const size_t disk_prefix_len = strlen(disk_prefix);
+  const char *prefix = &MORI_PREFIX_LITERAL[1];  /* skip the leading '/' */
+  const size_t prefix_len = strlen(prefix);
 
   char **list = NULL;
   size_t cap = 0, count = 0;
@@ -221,20 +302,23 @@ char **mori_shm_reap(int *n, int *supported) {
   struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {
     const char *fname = ent->d_name;
-    if (strncmp(fname, disk_prefix, disk_prefix_len) != 0) continue;
+    if (strncmp(fname, prefix, prefix_len) != 0) continue;
 
-    const char *pid_str = fname + disk_prefix_len;
+    const char *pid_str = fname + prefix_len;
     char *end;
     long pid = strtol(pid_str, &end, 16);
     if (end == pid_str || *end != '_') continue;    /* not <pid>_<counter> */
     if (mori_pid_alive((pid_t) pid)) continue;       /* creator still alive */
 
-    /* shm name = "/" + on-disk name */
+    /* shm name = "/" + entry name */
     char shm_name[MORI_NAME_MAX];
     int wn = snprintf(shm_name, sizeof(shm_name), "/%s", fname);
     if (wn <= 0 || (size_t) wn >= sizeof(shm_name)) continue;
 
-    if (mori_shm_os_unlink(shm_name) != 0) continue;  /* gone already / race */
+    /* Already gone: a race with another reap/unlink, so only the winner reports
+       it. On macOS the stale marker is still dropped (mori_shm_os_unlink does so
+       before returning). */
+    if (mori_shm_os_unlink(shm_name) != 0) continue;
 
     if (count == cap) {
       size_t ncap = cap ? cap * 2 : 8;
@@ -255,15 +339,14 @@ char **mori_shm_reap(int *n, int *supported) {
   return list;
 }
 
-#else /* macOS / other POSIX: the SHM namespace cannot be enumerated */
+#else /* other POSIX: the SHM namespace cannot be enumerated */
 
-char **mori_shm_reap(int *n, int *supported) {
+char **mori_shm_reap(int *n) {
   *n = 0;
-  *supported = 0;
   return NULL;
 }
 
-#endif
+#endif /* __linux__ || __APPLE__ */
 
 static size_t mori_shm_name(char *name, size_t size) {
   static unsigned int counter = 0;
@@ -321,6 +404,10 @@ int mori_shm_create(mori_shm *shm, size_t size) {
     madvise(addr, size, MADV_HUGEPAGE);
 #elif defined(__APPLE__)
   madvise(addr, size, MADV_WILLNEED);
+#endif
+
+#ifdef __APPLE__
+  mori_marker_create(shm->name);   /* register for reaping */
 #endif
 
   shm->addr = addr;

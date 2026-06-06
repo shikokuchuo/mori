@@ -1169,9 +1169,9 @@ SEXP mori_shm_name(SEXP x) {
 SEXP mori_unlink(SEXP name) {
 
   if (name == R_NilValue) {
-    int n = 0, supported = 0;
-    char **list = mori_shm_reap(&n, &supported);
-    if (!supported || n == 0) return R_NilValue;   /* list is NULL when n == 0 */
+    int n = 0;
+    char **list = mori_shm_reap(&n);
+    if (n == 0) return R_NilValue;                  /* list is NULL when n == 0 */
     SEXP out = PROTECT(Rf_allocVector(STRSXP, n));
     for (int i = 0; i < n; i++) {
       SET_STRING_ELT(out, i, Rf_mkChar(list[i]));

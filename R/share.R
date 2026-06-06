@@ -125,10 +125,15 @@ shared_name <- function(x) .Call(mori_shm_name, x)
 
 #' Unlink Shared Memory Regions
 #'
+#' @description
 #' Remove shared memory regions created by [share()]. Pass one or more region
 #' names to remove specific regions, or call with no arguments to reap
 #' *orphaned* regions: those whose creating process has died without cleaning
 #' up, for example after a crash, a `SIGKILL`, or the out-of-memory killer.
+#'
+#' This function is only needed on Linux and macOS. On Windows, shared memory
+#' cannot be orphaned, so there is never anything to clean up and calling it has
+#' no effect.
 #'
 #' @param name a character vector of shared memory names as returned by
 #'   [shared_name()], or `NULL` (the default) to reap orphaned regions. A
@@ -149,17 +154,6 @@ shared_name <- function(x) .Call(mori_shm_name, x)
 #' The reap form (`name = NULL`) is **conservative**: a region is removed only
 #' if its creating process — encoded in the region name — is no longer
 #' running, so regions still in use by a live process are never touched.
-#'
-#' @section Platform behaviour:
-#' \describe{
-#'   \item{Linux}{Both forms are supported; reaping enumerates `/dev/shm`.}
-#'   \item{macOS}{Removal by name is supported. Reaping is not: the kernel
-#'     shared memory namespace cannot be enumerated, so names must be passed
-#'     explicitly.}
-#'   \item{Windows}{Nothing is removed. A file mapping is reference-counted by
-#'     the operating system and cannot be orphaned, so there is no leftover to
-#'     clean up.}
-#' }
 #'
 #' @return Invisibly, a character vector of the region names that were
 #'   removed, or `NULL` if nothing was removed.
