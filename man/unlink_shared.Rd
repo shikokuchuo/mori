@@ -22,6 +22,10 @@ Remove shared memory regions created by \code{\link[=share]{share()}}. Pass one 
 names to remove specific regions, or call with no arguments to reap
 \emph{orphaned} regions: those whose creating process has died without cleaning
 up, for example after a crash, a \code{SIGKILL}, or the out-of-memory killer.
+
+This function is only needed on Linux and macOS. On Windows, shared memory
+cannot be orphaned, so there is never anything to clean up and calling it has
+no effect.
 }
 \details{
 Shared memory is normally managed automatically: a region is unlinked when
@@ -37,19 +41,6 @@ The reap form (\code{name = NULL}) is \strong{conservative}: a region is removed
 if its creating process — encoded in the region name — is no longer
 running, so regions still in use by a live process are never touched.
 }
-\section{Platform behaviour}{
-
-\describe{
-\item{Linux}{Both forms are supported; reaping enumerates \verb{/dev/shm}.}
-\item{macOS}{Removal by name is supported. Reaping is not: the kernel
-shared memory namespace cannot be enumerated, so names must be passed
-explicitly.}
-\item{Windows}{Nothing is removed. A file mapping is reference-counted by
-the operating system and cannot be orphaned, so there is no leftover to
-clean up.}
-}
-}
-
 \examples{
 x <- share(rnorm(100))
 nm <- shared_name(x)
