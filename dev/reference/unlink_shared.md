@@ -7,6 +7,10 @@ arguments to reap *orphaned* regions: those whose creating process has
 died without cleaning up, for example after a crash, a `SIGKILL`, or the
 out-of-memory killer.
 
+This function is only needed on Linux and macOS. On Windows, shared
+memory cannot be orphaned, so there is never anything to clean up and
+calling it has no effect.
+
 ## Usage
 
 ``` r
@@ -44,23 +48,6 @@ the last mapping is gone.
 The reap form (`name = NULL`) is **conservative**: a region is removed
 only if its creating process — encoded in the region name — is no longer
 running, so regions still in use by a live process are never touched.
-
-## Platform behaviour
-
-- Linux:
-
-  Both forms are supported; reaping enumerates `/dev/shm`.
-
-- macOS:
-
-  Removal by name is supported. Reaping is not: the kernel shared memory
-  namespace cannot be enumerated, so names must be passed explicitly.
-
-- Windows:
-
-  Nothing is removed. A file mapping is reference-counted by the
-  operating system and cannot be orphaned, so there is no leftover to
-  clean up.
 
 ## See also
 
