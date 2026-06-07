@@ -1,25 +1,37 @@
 # unlink_shared() — removal by name is supported on all POSIX platforms;
 # reaping (no argument) enumerates /dev/shm on Linux and mori's own per-user
-# marker directory (<TMPDIR>/mori) on macOS. Windows is skipped at file level.
+# registry directory (<TMPDIR>/mori) on macOS. Windows is skipped at file level.
 
 skip_on_os("windows")
 
-# Fabricate the on-disk record that reap scans for, for a region named after
-# `pid`, and return both the record path and the "/mori_..." shm name. On Linux
-# that record is a file in /dev/shm; on macOS it is a marker file in mori's
-# registry directory, which mirrors the C resolution exactly since both read the
-# same TMPDIR. Reaping classifies purely by the PID in the name.
+# Resolve mori's macOS registry directory exactly as the C side does (TMPDIR with
+# any trailing slash stripped, plus "/mori").
+mori_registry_dir <- function() {
+  tmp <- Sys.getenv("TMPDIR")
+  if (!nzchar(tmp)) skip("TMPDIR unset; cannot locate mori registry directory")
+  file.path(sub("/+$", "", tmp), "mori")
+}
+
+# The on-disk record reap scans for, for a region with the given "/mori_..."
+# name created by `pid`: on Linux the region file in /dev/shm itself; on macOS
+# the process's registry log <TMPDIR>/mori/mori_<pid>, whose lines name that
+# process's regions. Reaping classifies purely by the PID in the name.
+orphan_record_path <- function(pid, shm_name) {
+  if (Sys.info()[["sysname"]] == "Linux")
+    file.path("/dev/shm", sub("^/", "", shm_name))
+  else
+    file.path(mori_registry_dir(), sprintf("mori_%x", pid))
+}
+
+# Fabricate such a record on disk, returning its path and the "/mori_..." name.
 fabricate_orphan_record <- function(pid, counter = "0") {
-  name <- sprintf("mori_%x_%s", pid, counter)
-  shm_name <- paste0("/", name)
+  shm_name <- sprintf("/mori_%x_%s", pid, counter)
+  record <- orphan_record_path(pid, shm_name)
   if (Sys.info()[["sysname"]] == "Linux") {
-    record <- file.path("/dev/shm", name)
-  } else {                                            # Darwin
-    tmp <- Sys.getenv("TMPDIR")
-    if (!nzchar(tmp)) skip("TMPDIR unset; cannot locate mori marker directory")
-    dir <- file.path(sub("/+$", "", tmp), "mori")
-    dir.create(dir, showWarnings = FALSE, mode = "0700")
-    record <- file.path(dir, name)
+    file.create(record)                               # the region file itself
+  } else {                                            # Darwin: a per-process log
+    dir.create(dirname(record), showWarnings = FALSE, mode = "0700")
+    writeLines(shm_name, record)                      # one region name per line
   }
   list(record = record, shm_name = shm_name)
 }
@@ -101,15 +113,14 @@ test_that("unlink_shared() (reap) removes a dead process's orphan", {
   dead_pid <- as.integer(system("echo $$", intern = TRUE))
 
   orphan <- fabricate_orphan_record(dead_pid)
-  file.create(orphan$record)
   defer(unlink(orphan$record))
 
   reaped <- unlink_shared()
 
   # The record is cleared on every platform. On Linux the /dev/shm file is a
   # real region, so its name is also reported as removed; on macOS the record is
-  # a marker with no backing region, so shm_unlink finds nothing to reclaim and
-  # the name is not reported (it is reported only when a region was reclaimed).
+  # a log naming a region that does not exist, so shm_unlink finds nothing to
+  # reclaim and the name is not reported (reported only when a region was).
   expect_false(file.exists(orphan$record))
   if (Sys.info()[["sysname"]] == "Linux")
     expect_true(orphan$shm_name %in% reaped)
@@ -117,31 +128,30 @@ test_that("unlink_shared() (reap) removes a dead process's orphan", {
     expect_false(orphan$shm_name %in% reaped)
 })
 
-test_that("unlink_shared() (reap) keeps a live process's region", {
-  # A region named for the current (live) process must never be reaped.
-  live <- fabricate_orphan_record(Sys.getpid(), counter = "deadbeef")
-  file.create(live$record)
-  defer(unlink(live$record))
+test_that("unlink_shared() (reap) keeps a live process's record", {
+  # The reaper must skip the current (live) process. Share a real object so this
+  # process owns a registry record, then reap and confirm the record — and the
+  # region — survive (the live PID is classified alive).
+  x <- share(rnorm(100))
+  nm <- shared_name(x)
+  record <- orphan_record_path(Sys.getpid(), nm)
 
   reaped <- unlink_shared()
-  expect_false(live$shm_name %in% reaped)
-  expect_true(file.exists(live$record))
+  expect_false(nm %in% reaped)
+  expect_true(file.exists(record))
+  expect_silent(map_shared(nm))
+
+  rm(x)
+  gc()
 })
 
-# macOS registry-directory lifecycle: the marker directory <TMPDIR>/mori is
-# created on first share(), pruned when its last marker is removed, and recreated
-# on demand. macOS-only — Linux enumerates /dev/shm directly, Windows has no
-# registry.
+# macOS registry-directory lifecycle: the directory <TMPDIR>/mori is created on
+# first share(), pruned once this process's last region is finalised, and
+# recreated on demand. macOS-only — Linux enumerates /dev/shm directly, Windows
+# has no registry. Pruning is finalisation-driven (the process owns one log for
+# all its regions), so removing a region by name does not by itself drop the dir.
 
-# Resolve mori's registry directory exactly as the C side does (TMPDIR with any
-# trailing slash stripped, plus "/mori").
-mori_registry_dir <- function() {
-  tmp <- Sys.getenv("TMPDIR")
-  if (!nzchar(tmp)) skip("TMPDIR unset; cannot locate mori marker directory")
-  file.path(sub("/+$", "", tmp), "mori")
-}
-
-test_that("a live region's marker keeps the registry directory", {
+test_that("a live region keeps the registry directory", {
   skip_on_os(c("linux", "solaris"))
   dir <- mori_registry_dir()
 
@@ -149,29 +159,28 @@ test_that("a live region's marker keeps the registry directory", {
   y <- share(1:5)                  # both held live, so neither can be finalised
   expect_true(dir.exists(dir))
 
-  unlink_shared(shared_name(x))    # y's marker must still hold the directory
+  unlink_shared(shared_name(x))    # by-name removal leaves the log holding the dir
   expect_true(dir.exists(dir))
-
-  unlink_shared(shared_name(y))
 })
 
-test_that("the registry directory is pruned once its last marker is removed", {
+test_that("the registry directory is pruned once the last region is finalised", {
   skip_on_os(c("linux", "solaris"))
   dir <- mori_registry_dir()
 
-  # Isolate the assertion: finalise any unreferenced shared objects (drops their
-  # markers) and reap dead-process orphans, so the registry holds nothing we do
-  # not control. If something still lingers, skip rather than assert racily.
+  # Isolate the assertion: finalise any unreferenced shared objects (releasing
+  # them from the log) and reap dead-process orphans, so the registry holds
+  # nothing we do not control. If something still lingers, skip rather than
+  # assert racily.
   gc()
   unlink_shared()
   if (length(list.files(dir, pattern = "^mori_")) != 0)
     skip("registry not empty; cannot isolate the prune assertion")
 
-  x <- share(rnorm(10))            # the sole marker; held live until we remove it
-  nm <- shared_name(x)
+  x <- share(rnorm(10))            # the sole live region; holds the log open
   expect_true(dir.exists(dir))
 
-  unlink_shared(nm)                # last marker gone -> directory pruned
+  rm(x)
+  gc()                             # finalise it -> last region gone -> dir pruned
   expect_false(dir.exists(dir))
 })
 
@@ -182,9 +191,13 @@ test_that("share() recreates the registry directory on demand", {
   x <- share(rnorm(10))            # present whether or not the dir was just pruned
   nm <- shared_name(x)
   expect_true(dir.exists(dir))
-  expect_true(basename(nm) %in% list.files(dir, pattern = "^mori_"))  # reapable
 
-  unlink_shared(nm)
+  log <- file.path(dir, sprintf("mori_%x", Sys.getpid()))
+  expect_true(file.exists(log))               # this process's registry log
+  expect_true(nm %in% readLines(log))         # the region is recorded for reaping
+
+  rm(x)
+  gc()
 })
 
 test_that("reaping an idle process does not create the registry directory", {
