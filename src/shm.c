@@ -379,6 +379,10 @@ int mori_shm_create(mori_shm *shm, size_t size) {
   }
   if (fd < 0) return MORI_ERR_NAME_COLLISION;
 
+#ifdef __APPLE__
+  mori_marker_create(shm->name);   /* register for reaping */
+#endif
+
   if (ftruncate(fd, (off_t) size) != 0)
     return mori_create_fail(fd, shm->name, errno);
 
@@ -404,10 +408,6 @@ int mori_shm_create(mori_shm *shm, size_t size) {
     madvise(addr, size, MADV_HUGEPAGE);
 #elif defined(__APPLE__)
   madvise(addr, size, MADV_WILLNEED);
-#endif
-
-#ifdef __APPLE__
-  mori_marker_create(shm->name);   /* register for reaping */
 #endif
 
   shm->addr = addr;
