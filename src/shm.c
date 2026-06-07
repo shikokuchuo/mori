@@ -182,16 +182,17 @@ static int mori_shm_os_open(const char *name, int flags, mode_t mode) {
 #ifdef __APPLE__
 
 /* macOS has no enumerable SHM namespace (no /dev/shm), so to support reaping mori
-   keeps its own registry: one empty marker file per region under a per-user dir,
-   named like the region without the leading '/'. Created and removed with the
-   region, so both leak together on an unclean death and reaping clears both. All
-   marker ops are best-effort — a failure forfeits only reapability. */
+   keeps its own registry: one append-only log per process under a per-user dir,
+   named "mori_<pid>", listing every region the process created. A single write()
+   per share() (not a file per region); the reaper reads a dead PID's log, unlinks
+   the regions it names, then removes the log. Single-writer per process, so no
+   locking. All log ops are best-effort — a failure forfeits only reapability. */
 
-/* Per-user marker dir "<temp>/mori", resolved once and cached. Builds the path
-   but never creates it (mori_marker_create's job), so resolving for a remove or
+/* Per-user registry dir "<temp>/mori", resolved once and cached. Builds the path
+   but never creates it (mori_log_append's job), so resolving for a release or a
    reap never leaves an empty dir behind. $TMPDIR first to match R's
    Sys.getenv("TMPDIR"); NULL if unresolvable. */
-static const char *mori_marker_dir(void) {
+static const char *mori_log_dir(void) {
   static char dir[PATH_MAX];
   static int resolved = 0;            /* 0 = untried, 1 = valid, -1 = failed */
   if (resolved) return resolved > 0 ? dir : NULL;
@@ -219,41 +220,77 @@ static const char *mori_marker_dir(void) {
   return dir;
 }
 
-static int mori_marker_path(const char *shm_name, char *out, size_t outsize) {
-  const char *dir = mori_marker_dir();
+/* This process's log path "<dir>/mori_<pid>". The reaper parses the PID back out
+   of the name (mori_<pidhex>, no trailing counter) to test the creator's death. */
+static int mori_log_path(char *out, size_t outsize) {
+  const char *dir = mori_log_dir();
   if (dir == NULL) return -1;
-  int n = snprintf(out, outsize, "%s/%s", dir, shm_name + 1);  /* skip '/' */
+  int n = snprintf(out, outsize, "%s/%s%x",
+                   dir, &MORI_PREFIX_LITERAL[1], (unsigned) getpid());
   return (n > 0 && (size_t) n < outsize) ? 0 : -1;
 }
 
-static void mori_marker_create(const char *shm_name) {
-  char path[PATH_MAX];
-  if (mori_marker_path(shm_name, path, sizeof(path)) != 0) return;
-  int fd = open(path, O_CREAT | O_WRONLY, 0600);
-  if (fd < 0 && errno == ENOENT) {         /* dir absent: create it and retry */
-    const char *dir = mori_marker_dir();
-    if (dir != NULL) mkdir(dir, 0700);
-    fd = open(path, O_CREAT | O_WRONLY, 0600);
-  }
-  if (fd >= 0) close(fd);                  /* empty: the name carries the PID */
+/* Process-global log state. mori_log_live counts regions whose teardown still
+   owes a release; the log is pruned when it returns to zero. */
+static int   mori_log_fd   = -1;
+static pid_t mori_log_pid  = -1;        /* pid that opened mori_log_fd */
+static long  mori_log_live = 0;
+
+/* Drop state inherited across a fork: the fd is the parent's, so close (never
+   unlink) it and let the child open its own log on its next append. */
+static void mori_log_fork_guard(void) {
+  pid_t pid = getpid();
+  if (mori_log_pid == pid) return;
+  if (mori_log_fd >= 0) close(mori_log_fd);
+  mori_log_fd = -1;
+  mori_log_live = 0;
+  mori_log_pid = pid;
 }
 
-static void mori_marker_remove(const char *shm_name) {
+/* Record a created region, opening the log on first use. Increments the live
+   count unconditionally so it stays balanced against mori_log_release even when
+   logging itself fails (which only forfeits reapability). */
+static void mori_log_append(const char *name) {
+  mori_log_fork_guard();
+  if (mori_log_fd < 0) {
+    char path[PATH_MAX];
+    if (mori_log_path(path, sizeof(path)) == 0) {
+      int fd = open(path, O_CREAT | O_WRONLY | O_APPEND, 0600);
+      if (fd < 0 && errno == ENOENT) {     /* dir absent: create it and retry */
+        const char *dir = mori_log_dir();
+        if (dir != NULL) mkdir(dir, 0700);
+        fd = open(path, O_CREAT | O_WRONLY | O_APPEND, 0600);
+      }
+      mori_log_fd = fd;
+    }
+  }
+  if (mori_log_fd >= 0) {
+    char line[MORI_NAME_MAX + 1];
+    int n = snprintf(line, sizeof(line), "%s\n", name);
+    if (n > 0 && (size_t) n < sizeof(line)) {
+      ssize_t w = write(mori_log_fd, line, (size_t) n);
+      (void) w;
+    }
+  }
+  mori_log_live++;
+}
+
+/* One of our regions was torn down; prune the log (and dir) when none remain. */
+static void mori_log_release(void) {
+  if (mori_log_pid != getpid()) return;   /* finalizer for a pre-fork region */
+  if (mori_log_live > 0) mori_log_live--;
+  if (mori_log_live > 0) return;
+  if (mori_log_fd >= 0) { close(mori_log_fd); mori_log_fd = -1; }
   char path[PATH_MAX];
-  if (mori_marker_path(shm_name, path, sizeof(path)) != 0) return;
-  unlink(path);
-  const char *dir = mori_marker_dir();
-  if (dir != NULL) rmdir(dir);             /* prune the dir once empty */
+  if (mori_log_path(path, sizeof(path)) == 0) unlink(path);
+  const char *dir = mori_log_dir();
+  if (dir != NULL) rmdir(dir);            /* prune the dir once empty */
 }
 
 #endif /* __APPLE__ */
 
 static int mori_shm_os_unlink(const char *name) {
-  int r = shm_unlink(name);
-#ifdef __APPLE__
-  mori_marker_remove(name);            /* drop the marker in lockstep */
-#endif
-  return r;
+  return shm_unlink(name);             /* region only; the log is per-process */
 }
 
 #endif
@@ -275,29 +312,66 @@ static int mori_pid_alive(pid_t pid) {
   return errno == EPERM;              /* exists but owned by another user */
 }
 
-/* Reap orphans of dead creators by scanning a directory of mori region names —
-   /dev/shm entries on Linux, mori's marker files on macOS — and unlinking the
-   region behind each name whose creator PID (mori_<pid>_<counter>) is dead.
-   Returns the removed names ("/mori_..." form) as a malloc'd array of *n malloc'd
-   strings (caller frees each, then the array); NULL / *n == 0 if none. */
+/* Unlink region `name` and, if it actually reclaimed a region, append a malloc'd
+   copy to the growable (*list,*cap,*count) result. A name already gone (lost a
+   race with another reap/unlink) is skipped, not reported. Returns -1 on OOM so
+   the caller stops, else 0. */
+static int mori_reap_unlink(const char *name,
+                            char ***list, size_t *cap, size_t *count) {
+  if (mori_shm_os_unlink(name) != 0) return 0;
+  if (*count == *cap) {
+    size_t ncap = *cap ? *cap * 2 : 8;
+    char **grown = realloc(*list, ncap * sizeof(**list));
+    if (grown == NULL) return -1;
+    *list = grown;
+    *cap = ncap;
+  }
+  size_t len = strlen(name) + 1;
+  char *copy = malloc(len);
+  if (copy == NULL) return -1;
+  memcpy(copy, name, len);
+  (*list)[(*count)++] = copy;
+  return 0;
+}
+
+#ifdef __APPLE__
+/* Read a dead process's log and unlink every region it names. */
+static int mori_reap_log(const char *path,
+                         char ***list, size_t *cap, size_t *count) {
+  FILE *f = fopen(path, "r");
+  if (f == NULL) return 0;
+  char line[MORI_NAME_MAX + 2];
+  int rc = 0;
+  while (fgets(line, sizeof(line), f) != NULL) {
+    size_t len = strlen(line);
+    if (len > 0 && line[len - 1] == '\n') line[--len] = '\0';  /* fgets: one '\n' */
+    if (len > 0 && mori_reap_unlink(line, list, cap, count) != 0) {
+      rc = -1;                                   /* OOM */
+      break;
+    }
+  }
+  fclose(f);
+  return rc;
+}
+#endif
+
+/* Reap orphans of dead creators. Linux scans /dev/shm, where each entry is a
+   region name; macOS scans its registry dir, where each entry is a per-process
+   log (mori_<pid>) whose lines name that process's regions. Either way the
+   creator PID (mori_<pid>...) drives the liveness test. Returns the removed
+   names ("/mori_..." form) as a malloc'd array of *n malloc'd strings (caller
+   frees each, then the array); NULL / *n == 0 if none. */
 char **mori_shm_reap(int *n) {
   *n = 0;
 
-#ifdef __linux__
-  const char *scan_dir = "/dev/shm";          /* the kernel's own registry */
-#else
-  const char *scan_dir = mori_marker_dir();   /* mori's marker registry */
-  if (scan_dir == NULL) return NULL;          /* marker dir unavailable */
-#endif
-
-  DIR *dir = opendir(scan_dir);
-  if (dir == NULL) return NULL;
-
   const char *prefix = &MORI_PREFIX_LITERAL[1];  /* skip the leading '/' */
   const size_t prefix_len = strlen(prefix);
-
   char **list = NULL;
   size_t cap = 0, count = 0;
+
+#ifdef __linux__
+  DIR *dir = opendir("/dev/shm");                /* the kernel's own registry */
+  if (dir == NULL) return NULL;
 
   struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {
@@ -310,30 +384,39 @@ char **mori_shm_reap(int *n) {
     if (end == pid_str || *end != '_') continue;    /* not <pid>_<counter> */
     if (mori_pid_alive((pid_t) pid)) continue;       /* creator still alive */
 
-    /* shm name = "/" + entry name */
-    char shm_name[MORI_NAME_MAX];
+    char shm_name[MORI_NAME_MAX];                    /* shm name = "/" + entry */
     int wn = snprintf(shm_name, sizeof(shm_name), "/%s", fname);
     if (wn <= 0 || (size_t) wn >= sizeof(shm_name)) continue;
-
-    /* Already gone: a race with another reap/unlink, so only the winner reports
-       it. On macOS the stale marker is still dropped (mori_shm_os_unlink does so
-       before returning). */
-    if (mori_shm_os_unlink(shm_name) != 0) continue;
-
-    if (count == cap) {
-      size_t ncap = cap ? cap * 2 : 8;
-      char **grown = realloc(list, ncap * sizeof(*list));
-      if (grown == NULL) break;                       /* OOM: return so far */
-      list = grown;
-      cap = ncap;
-    }
-    size_t len = (size_t) wn + 1;              /* wn == strlen(shm_name) */
-    char *copy = malloc(len);
-    if (copy == NULL) break;
-    memcpy(copy, shm_name, len);
-    list[count++] = copy;
+    if (mori_reap_unlink(shm_name, &list, &cap, &count) != 0) break;
   }
   closedir(dir);
+#else /* __APPLE__ */
+  const char *scan = mori_log_dir();          /* mori's per-process logs */
+  if (scan == NULL) return NULL;
+  DIR *dir = opendir(scan);
+  if (dir == NULL) return NULL;                  /* no logs: nothing to reap */
+
+  struct dirent *ent;
+  while ((ent = readdir(dir)) != NULL) {
+    const char *fname = ent->d_name;
+    if (strncmp(fname, prefix, prefix_len) != 0) continue;
+
+    const char *pid_str = fname + prefix_len;
+    char *end;
+    long pid = strtol(pid_str, &end, 16);
+    if (end == pid_str || *end != '\0') continue;   /* log is "mori_<pid>" */
+    if (mori_pid_alive((pid_t) pid)) continue;       /* live owner: leave its log */
+
+    char path[PATH_MAX];
+    int pn = snprintf(path, sizeof(path), "%s/%s", scan, fname);
+    if (pn <= 0 || (size_t) pn >= sizeof(path)) continue;
+    if (mori_reap_log(path, &list, &cap, &count) != 0)
+      break;                          /* OOM: leave the log for a later retry */
+    unlink(path);                                /* drop the dead process's log */
+  }
+  closedir(dir);
+  rmdir(scan);                                   /* prune the dir once empty */
+#endif
 
   *n = (int) count;
   return list;
@@ -361,6 +444,9 @@ static size_t mori_shm_name(char *name, size_t size) {
 static int mori_create_fail(int fd, const char *name, int code) {
   close(fd);
   mori_shm_os_unlink(name);
+#ifdef __APPLE__
+  mori_log_release();              /* undo the append done before this failure */
+#endif
   return mori_err_classify(code);
 }
 
@@ -380,7 +466,7 @@ int mori_shm_create(mori_shm *shm, size_t size) {
   if (fd < 0) return MORI_ERR_NAME_COLLISION;
 
 #ifdef __APPLE__
-  mori_marker_create(shm->name);   /* register for reaping */
+  mori_log_append(shm->name);   /* register before the region escapes */
 #endif
 
   if (ftruncate(fd, (off_t) size) != 0)
@@ -543,6 +629,9 @@ void mori_host_finalizer(SEXP ptr) {
     if (shm->handle != NULL) CloseHandle(shm->handle);
 #else
     if (shm->name[0] != '\0') mori_shm_os_unlink(shm->name);
+#ifdef __APPLE__
+    mori_log_release();              /* balance the create-time append */
+#endif
 #endif
     free(shm);
     R_ClearExternalPtr(ptr);
