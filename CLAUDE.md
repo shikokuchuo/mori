@@ -8,35 +8,11 @@ mori — Shared Memory for R Objects. Uses POSIX shared memory (Linux, macOS) an
 
 ## Development Commands
 
-### Testing
-
-```r
-# Run the full testthat suite
-devtools::test()
-
-# Run a single test file
-devtools::test_active_file()
-testthat::test_file("tests/testthat/test-nested.R")
-```
-
-### Building and Checking
-
-```bash
-# Build package
-R CMD build .
-
-# Check package
-R CMD check --no-manual mori_*.tar.gz
-```
-
-```r
-# Generate documentation from roxygen2 comments
-devtools::document()
-```
+Standard R-package workflow (`devtools::test()`, `devtools::document()`, `R CMD build` / `R CMD check`). Run a single test file with `testthat::test_file("tests/testthat/test-nested.R")`.
 
 ## Storage Model
 
-- **Zero-copy (SHM-backed)**: All atomic vectors (any type, any attributes) and data frame columns are written directly into SHM and backed by ALTREP on consumers. Attributes serialize into a trailing region and are reapplied on the consumer. Numeric `Dataptr_or_null` returns the SHM pointer; `Dataptr(writable=TRUE)` triggers COW into a private copy. String `Elt` lazily creates CHARSXPs via `Rf_mkCharLenCE`; `Dataptr_or_null` returns NULL to force per-element access.
+- **Zero-copy (SHM-backed)**: All atomic vectors (any type, any attributes) and data frame columns are written directly into SHM and backed by ALTREP on consumers. Attributes serialize into a trailing region and are reapplied on the consumer. Numeric `Dataptr_or_null` returns the SHM pointer; `Dataptr(writable=TRUE)` triggers COW into a private copy. String `Elt` lazily creates CHARSXPs; `Dataptr_or_null` returns NULL to force per-element access.
 - **Nested lists (zero-copy)**: VECSXP/LISTSXP elements of a shared list are written inline as a complete child MORL region at their `data_offset`; each level wraps in its own ALTLIST. `is_shared()` returns TRUE for sub-lists; `shared_name()` returns a path-bearing identifier; `map_shared(shared_name(sub))` opens the addressed sub-list / element directly. The OS-level region name is the prefix before `[` and is recoverable via `sub("\\[.*$", "", shared_name(x))`.
 - **Pass-through**: All other R objects (environments, closures, language objects, NULL) are returned unchanged. No SHM is created.
 
@@ -91,7 +67,7 @@ int1       ::= [1-9][0-9]*       # 1-based, no leading zeros
 
 `MORI_PREFIX_LITERAL` (in `mori.h`) is `/mori_` (POSIX) / `Local\\mori_` (Windows) and is the **single source of truth shared between `shm.c`'s name-format strings** (`MORI_PREFIX_LITERAL "%x_%x"` POSIX, `MORI_PREFIX_LITERAL "%lx_%x"` Windows) and the parser's literal `memcmp`. Change once; both sides stay in sync. Names are variable-width hex (no zero-padding); `MORI_NAME_MAX = 30` bounds the prefix on either platform (Windows worst case: `Local\\mori_<8hex>_<8hex>` = 28 chars + NUL).
 
-`mori_parse_identifier` is bounded and single-pass: `memchr` length cap (`MORI_IDENTIFIER_MAX`) → literal `memcmp` against `MORI_PREFIX_LITERAL` → two bounded hex-digit run scans separated by `_` (each guarded by `p < eos`, each rejecting empty runs) → dispatch on the byte after the second run (`\0` for prefix-only, `[` for path) → comma-separated 1-based indices with per-token `INT32_MAX` overflow check, terminated by `]`. Indices stored as 0-based. The path-parse loop relies on NUL-termination as a sentinel (every fail-branch's predicate excludes `\0`), so trailing `p < eos` checks aren't needed there. Sizing invariant: `MORI_NAME_MAX + 2 + 11 × MORI_MAX_PATH < MORI_FORMAT_BUFLEN`.
+`mori_parse_identifier` is bounded and single-pass (length-capped by `MORI_IDENTIFIER_MAX`); indices are externalised 1-based and stored 0-based. The path-parse loop relies on NUL-termination as a sentinel (every fail-branch's predicate excludes `\0`), so trailing `p < eos` checks aren't needed there. Sizing invariant: `MORI_NAME_MAX + 2 + 11 × MORI_MAX_PATH < MORI_FORMAT_BUFLEN`.
 
 ### Validation contract
 
@@ -164,7 +140,7 @@ SHM lifetime is fully automatic via chained external pointer finalizers. Three i
 ### src/
 
 - **mori.h** — types (`mori_shm`, `mori_buf`, `mori_vec` with `index` field, `mori_list_view`), declarations, `MORI_ALIGN64`, `mori_sizeof_elt`, and the identifier grammar constants (`MORI_NAME_MAX`, `MORI_MAX_PATH`, `MORI_IDENTIFIER_MAX`, `MORI_FORMAT_BUFLEN`, `MORI_PREFIX_LITERAL`).
-- **shm.c** — platform SHM create/open/close + finalizers for both sides. `mori_shm_unlink_name` unlinks by name (all POSIX). `mori_shm_reap` enumerates the platform's name source — `/dev/shm` on Linux (entries are region names), the per-user registry dir `<TMPDIR>/mori` on macOS (entries are per-process append-only logs `mori_<pid>`, selected by `#ifdef`) — and classifies by the PID embedded in the name via `mori_pid_alive`: Linux unlinks each dead-PID region directly; macOS reads each dead-PID log (`mori_reap_log`) and unlinks the regions it names, then removes the log. Both feed the shared per-name core `mori_reap_unlink` (shm_unlink + record-on-reclaim). Windows / other POSIX cannot reap → `NULL` / `*n == 0`. `mori_shm_os_unlink` is the single region-unlink seam (host finalizer, by-name unlink, create-fail, reap) and is now pure `shm_unlink` — the macOS registry is decoupled from it and managed instead by `mori_log_append` (in `mori_shm_create`, one `write()` per share) and `mori_log_release` (host finalizer / create-fail), which prunes the log + dir once the process's live-region count returns to zero (see Platform Notes). Reap semantics A, both platforms: a dead-PID region is reported removed only when `shm_unlink` actually reclaimed it, so concurrent reaps never double-report. Error path: `mori_err_classify` (static; native errno / GetLastError → portable `MORI_ERR_*` category) and `mori_err_describe` (category summary + platform remediation hint); `mori_shm_create` / `mori_shm_create_heap` return `MORI_OK` or a failure category, classifying the native code **before** any `close` / `unlink` / `CloseHandle` clobbers `errno` / `GetLastError`.
+- **shm.c** — platform SHM create/open/close + finalizers for both sides. `mori_shm_unlink_name` unlinks by name (all POSIX). `mori_shm_reap` enumerates the platform's name source (`#ifdef`-selected) — `/dev/shm` on Linux (entries are region names), the per-user registry dir on macOS (per-process logs; see Platform Notes) — classifies by the PID embedded in the name via `mori_pid_alive` (Linux unlinks each dead-PID region directly; macOS reads each dead-PID log via `mori_reap_log` and unlinks the regions it names), and feeds the shared per-name core `mori_reap_unlink` (shm_unlink + record-on-reclaim). Windows / other POSIX cannot reap → `NULL` / `*n == 0`. `mori_shm_os_unlink` is the single region-unlink seam (host finalizer, by-name unlink, create-fail, reap) and is pure `shm_unlink`; the macOS registry is decoupled from it and managed by `mori_log_append` / `mori_log_release` (see Platform Notes). Reap semantics A, both platforms: a dead-PID region is reported removed only when `shm_unlink` actually reclaimed it, so concurrent reaps never double-report. Error path: `mori_err_classify` (static; native errno / GetLastError → portable `MORI_ERR_*` category) and `mori_err_describe` (category summary + platform remediation hint); `mori_shm_create` / `mori_shm_create_heap` return `MORI_OK` or a failure category, classifying the native code **before** any `close` / `unlink` / `CloseHandle` clobbers `errno` / `GetLastError`.
 - **serialize.c** — `mori_serialize_count`, `mori_serialize_into`, `mori_unserialize_from`. Used for fallback (non-zero-copy) ALTLIST entries where directory `sexptype == 0`.
 - **altrep.c** — all ALTREP class definitions, `mori_create` dispatcher, recursive writers (`mori_nested_size` / `mori_nested_write`), consumer open+wrap (`mori_shm_open_and_wrap`), path open (`mori_open_path_c`), view constructors (`mori_make_view_extptr` for bare keeper-chain extptrs, `mori_make_list_view` for full ALTLIST + attrs), identity/name (`mori_is_shared` / `mori_shm_name`), identifier formatter / parser (`mori_format_chain` / `mori_parse_identifier`), serialization hooks, `mori_altrep_init`. The create-failure message lives in `mori_shm_create_failed`, which composes the requested size (`mori_format_bytes`) with `mori_err_describe`'s summary + hint into a single `Rf_error`.
 - **init.c** — `R_init_mori`, `.Call` registration table (5 entries: `mori_create`, `mori_shm_open_and_wrap`, `mori_is_shared`, `mori_shm_name`, `mori_unlink`).
