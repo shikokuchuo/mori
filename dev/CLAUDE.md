@@ -26,33 +26,9 @@ identifier as the wire form — transparent under
 
 ## Development Commands
 
-### Testing
-
-``` r
-
-# Run the full testthat suite
-devtools::test()
-
-# Run a single test file
-devtools::test_active_file()
-testthat::test_file("tests/testthat/test-nested.R")
-```
-
-### Building and Checking
-
-``` bash
-# Build package
-R CMD build .
-
-# Check package
-R CMD check --no-manual mori_*.tar.gz
-```
-
-``` r
-
-# Generate documentation from roxygen2 comments
-devtools::document()
-```
+Standard R-package workflow (`devtools::test()`, `devtools::document()`,
+`R CMD build` / `R CMD check`). Run a single test file with
+`testthat::test_file("tests/testthat/test-nested.R")`.
 
 ## Storage Model
 
@@ -61,9 +37,8 @@ devtools::document()
   backed by ALTREP on consumers. Attributes serialize into a trailing
   region and are reapplied on the consumer. Numeric `Dataptr_or_null`
   returns the SHM pointer; `Dataptr(writable=TRUE)` triggers COW into a
-  private copy. String `Elt` lazily creates CHARSXPs via
-  `Rf_mkCharLenCE`; `Dataptr_or_null` returns NULL to force per-element
-  access.
+  private copy. String `Elt` lazily creates CHARSXPs; `Dataptr_or_null`
+  returns NULL to force per-element access.
 - **Nested lists (zero-copy)**: VECSXP/LISTSXP elements of a shared list
   are written inline as a complete child MORL region at their
   `data_offset`; each level wraps in its own ALTLIST.
@@ -194,16 +169,11 @@ hex (no zero-padding); `MORI_NAME_MAX = 30` bounds the prefix on either
 platform (Windows worst case: `Local\\mori_<8hex>_<8hex>` = 28 chars +
 NUL).
 
-`mori_parse_identifier` is bounded and single-pass: `memchr` length cap
-(`MORI_IDENTIFIER_MAX`) → literal `memcmp` against `MORI_PREFIX_LITERAL`
-→ two bounded hex-digit run scans separated by `_` (each guarded by
-`p < eos`, each rejecting empty runs) → dispatch on the byte after the
-second run (`\0` for prefix-only, `[` for path) → comma-separated
-1-based indices with per-token `INT32_MAX` overflow check, terminated by
-`]`. Indices stored as 0-based. The path-parse loop relies on
-NUL-termination as a sentinel (every fail-branch’s predicate excludes
-`\0`), so trailing `p < eos` checks aren’t needed there. Sizing
-invariant:
+`mori_parse_identifier` is bounded and single-pass (length-capped by
+`MORI_IDENTIFIER_MAX`); indices are externalised 1-based and stored
+0-based. The path-parse loop relies on NUL-termination as a sentinel
+(every fail-branch’s predicate excludes `\0`), so trailing `p < eos`
+checks aren’t needed there. Sizing invariant:
 `MORI_NAME_MAX + 2 + 11 × MORI_MAX_PATH < MORI_FORMAT_BUFLEN`.
 
 ### Validation contract
@@ -360,24 +330,26 @@ for sub-objects.
   `MORI_FORMAT_BUFLEN`, `MORI_PREFIX_LITERAL`).
 - **shm.c** — platform SHM create/open/close + finalizers for both
   sides. `mori_shm_unlink_name` unlinks by name (all POSIX).
-  `mori_shm_reap` enumerates the platform’s name source — `/dev/shm` on
-  Linux, the per-user marker directory `<TMPDIR>/mori` on macOS
-  (selected by `#ifdef`) — then runs one shared scan loop that
-  classifies each name by its embedded PID via `mori_pid_alive` and
-  unlinks dead-PID orphans (Windows / other POSIX cannot reap → `NULL` /
-  `*n == 0`). `mori_shm_os_unlink` is the single unlink seam (host
-  finalizer, by-name unlink, create-fail) and also removes the macOS
-  marker (rationale in Platform Notes). Reap semantics A, both
-  platforms: a dead-PID name is reported removed only when `shm_unlink`
-  actually reclaimed a region, so concurrent reaps never double-report;
-  a stale macOS marker (region already gone) is cleaned but not
-  reported, since `mori_shm_os_unlink` removes the marker before
-  returning. Error path: `mori_err_classify` (static; native errno /
-  GetLastError → portable `MORI_ERR_*` category) and `mori_err_describe`
-  (category summary + platform remediation hint); `mori_shm_create` /
-  `mori_shm_create_heap` return `MORI_OK` or a failure category,
-  classifying the native code **before** any `close` / `unlink` /
-  `CloseHandle` clobbers `errno` / `GetLastError`.
+  `mori_shm_reap` enumerates the platform’s name source
+  (`#ifdef`-selected) — `/dev/shm` on Linux (entries are region names),
+  the per-user registry dir on macOS (per-process logs; see Platform
+  Notes) — classifies by the PID embedded in the name via
+  `mori_pid_alive` (Linux unlinks each dead-PID region directly; macOS
+  reads each dead-PID log via `mori_reap_log` and unlinks the regions it
+  names), and feeds the shared per-name core `mori_reap_unlink`
+  (shm_unlink + record-on-reclaim). Windows / other POSIX cannot reap →
+  `NULL` / `*n == 0`. `mori_shm_os_unlink` is the single region-unlink
+  seam (host finalizer, by-name unlink, create-fail, reap) and is pure
+  `shm_unlink`; the macOS registry is decoupled from it and managed by
+  `mori_log_append` / `mori_log_release` (see Platform Notes). Reap
+  semantics A, both platforms: a dead-PID region is reported removed
+  only when `shm_unlink` actually reclaimed it, so concurrent reaps
+  never double-report. Error path: `mori_err_classify` (static; native
+  errno / GetLastError → portable `MORI_ERR_*` category) and
+  `mori_err_describe` (category summary + platform remediation hint);
+  `mori_shm_create` / `mori_shm_create_heap` return `MORI_OK` or a
+  failure category, classifying the native code **before** any `close` /
+  `unlink` / `CloseHandle` clobbers `errno` / `GetLastError`.
 - **serialize.c** — `mori_serialize_count`, `mori_serialize_into`,
   `mori_unserialize_from`. Used for fallback (non-zero-copy) ALTLIST
   entries where directory `sexptype == 0`.
@@ -428,22 +400,40 @@ are authoritative). All tests run unconditionally — nothing gated behind
   no extra link flags). `MAP_POPULATE` is a no-op (defined to 0). The
   kernel POSIX-shm namespace has no filesystem footprint and cannot be
   enumerated (invisible to `ipcs` / `lsof` once the creator dies), so
-  orphan reaping relies on a per-user marker-file registry under
-  `TMPDIR` (resolved via `$TMPDIR`, then
-  `confstr(_CS_DARWIN_USER_TEMP_DIR)`, then `/tmp`) that `mori_shm_reap`
-  scans in place of `/dev/shm`. Each region drops an empty marker in
-  `mori_shm_create` and removes it in `mori_shm_os_unlink`, in lockstep
-  with the region and entirely best-effort — a marker failure forfeits
-  only reapability, never the region. The registry directory is pruned
-  (`rmdir`) when its last marker is removed and recreated on demand by
-  the next marker (`mori_marker_create` retries through an `mkdir` on
-  `ENOENT`), so it never lingers empty; `rmdir` succeeds only when
-  empty, so a live marker or any foreign file holds it. Path resolution
-  (`mori_marker_dir`) is pure — it builds and caches the path string but
-  never creates the directory, so `mori_marker_create` is the sole
-  creator and resolving a path for a remove or a reap never materialises
-  an empty dir (a reap on a process with no regions opens nothing and
-  leaves nothing behind).
+  orphan reaping relies on a per-user registry under `TMPDIR` (resolved
+  via `$TMPDIR`, then `confstr(_CS_DARWIN_USER_TEMP_DIR)`, then `/tmp`)
+  that `mori_shm_reap` scans in place of `/dev/shm`. The registry must
+  live in an enumerable namespace — putting it in SHM would face the
+  same non-enumerability wall — so it is filesystem-backed, but to keep
+  the
+  per-[`share()`](https://shikokuchuo.net/mori/dev/reference/share.md)
+  cost off the critical path it is **one append-only log per process**
+  (`<dir>/mori_<pid>`) rather than a file per region: `mori_log_append`
+  (called in `mori_shm_create` before the region is observable) opens
+  the log lazily on first share and appends one line per region name — a
+  single [`write()`](https://rdrr.io/r/base/write.html) (~1 µs) vs
+  creating a file (~40 µs on APFS, where neither path resolution nor a
+  cached dir fd helps because the cost is inode allocation +
+  journaling). Single-writer per process ⇒ no locking; the only reader
+  is a reaper of a *dead* PID, which by definition has no concurrent
+  writer. `mori_log_release` (host finalizer / create-fail) decrements a
+  process-global live-region count and, at zero, closes+unlinks the log
+  and `rmdir`s the now-empty dir — so the dir tracks the live-region set
+  as the per-region markers did, but driven by finalization, not by-name
+  unlink (`unlink_shared(name)` removes only the region; its log line
+  lingers harmlessly until reap or count-zero). The count is incremented
+  unconditionally so it stays balanced when logging itself fails (which
+  forfeits only reapability, never the region). Fork-safe:
+  `mori_log_fork_guard` reopens the log when `getpid()` changes (the
+  inherited fd is the parent’s — closed, never unlinked). Crash
+  semantics match the regions’: a
+  [`write()`](https://rdrr.io/r/base/write.html) is visible
+  cross-process via the page cache without `fsync` and survives the
+  writer’s death, lost only on reboot. Path resolution (`mori_log_dir`)
+  is pure — builds/caches the path but never creates the dir
+  (`mori_log_append` retries through `mkdir` on `ENOENT` and is the sole
+  creator), so a reap on a process with no log opens nothing and leaves
+  nothing behind. All log ops best-effort.
 - **Windows**: Page-file-backed via `CreateFileMappingA` /
   `MapViewOfFile`. `kernel32` is always available. Host must keep the
   mapping handle alive until consumers have opened it (the GC-chained
