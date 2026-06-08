@@ -166,9 +166,9 @@ shared_name(df[[50]])  # sub-path into the same region
 
 Shared memory is managed by R's garbage collector.
 The shared memory region stays alive as long as any shared object backed by it remains referenced in R — the original returned by `share()`, or a column or sub-list extracted from it, in this or another process.
-When no references remain, the garbage collector frees the shared memory automatically.
+When no references remain — or the session exits cleanly — the shared memory is freed automatically.
 
-**Important:** Assign the result of `share()` to a variable — otherwise the garbage collector may free the shared memory before a consumer maps it.
+**Important:** Ensure the return value of `share()` is not garbage collected before a consumer can map its shared memory.
 
 If a process is killed before cleanup can run — a crash, `SIGKILL`, or the OOM killer — its region can be left behind.
 `prune_shared()` reclaims such orphans, removing only regions whose creating process is no longer running.

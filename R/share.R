@@ -22,14 +22,14 @@
 #'
 #' The shared memory region is managed automatically. It stays alive as long
 #' as the returned object (or any element extracted from it) is referenced
-#' in R, and is freed by the garbage collector when no references remain.
+#' in R, and is freed automatically when no references remain or the session
+#' exits cleanly.
 #'
 #' `share()` is idempotent: calling it on an object that is already backed by
 #' shared memory returns the input unchanged without allocating a new region.
 #'
-#' **Important**: assign the result of `share()` to a variable — otherwise
-#' the garbage collector may free the shared memory before a consumer maps
-#' it.
+#' **Important**: ensure the return value of `share()` is not garbage
+#' collected before a consumer can map its shared memory.
 #'
 #' @section Persistence:
 #' Direct [saveRDS()] of a shared object writes only the shared memory name,
