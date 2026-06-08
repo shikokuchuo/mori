@@ -112,13 +112,7 @@ void mori_shm_close(mori_shm *shm, int unlink) {
 }
 
 /* A Win32 file mapping lives only while a handle to it is open, so it cannot
-   outlive its creator: there is no persistent name to remove and no orphan to
-   reap. Both entry points are no-ops. */
-int mori_shm_unlink_name(const char *name) {
-  (void) name;
-  return -1;
-}
-
+   outlive its creator: there are no persistent names and no orphans to reap. */
 char **mori_shm_reap(int *n) {
   *n = 0;
   return NULL;
@@ -294,12 +288,6 @@ static int mori_shm_os_unlink(const char *name) {
 }
 
 #endif
-
-/* Public unlink-by-name for unlink_shared(). Returns 0 on success, -1 on
-   failure (e.g. the region is absent). */
-int mori_shm_unlink_name(const char *name) {
-  return mori_shm_os_unlink(name);
-}
 
 #if defined(__linux__) || defined(__APPLE__)
 

@@ -73,7 +73,6 @@ int mori_shm_create_heap(mori_shm **out, size_t size);
 mori_shm *mori_shm_open_heap(const char *name);
 void mori_shm_finalizer(SEXP ptr);
 void mori_host_finalizer(SEXP ptr);
-int mori_shm_unlink_name(const char *name);
 char **mori_shm_reap(int *n);
 void mori_err_describe(int category, const char **summary, const char **hint);
 
