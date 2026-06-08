@@ -111,7 +111,7 @@ processes without going through serialization:
 x <- share(rnorm(1e6))
 
 shared_name(x)
-#> [1] "/mori_cc1a_1"
+#> [1] "/mori_d04e_1"
 
 # Another process — here the same one — can map the region by name
 y <- map_shared(shared_name(x))
@@ -178,9 +178,9 @@ strings are accessed lazily per element.
 
 df <- share(as.data.frame(matrix(rnorm(1e7), ncol = 100)))
 shared_name(df)        # one region for all 100 columns
-#> [1] "/mori_cc1a_3"
+#> [1] "/mori_d04e_3"
 shared_name(df[[50]])  # sub-path into the same region
-#> [1] "/mori_cc1a_3[50]"
+#> [1] "/mori_d04e_3[50]"
 ```
 
 ### Lifetime
@@ -190,13 +190,12 @@ region stays alive as long as any shared object backed by it remains
 referenced in R — the original returned by
 [`share()`](https://shikokuchuo.net/mori/dev/reference/share.md), or a
 column or sub-list extracted from it, in this or another process. When
-no references remain, the garbage collector frees the shared memory
-automatically.
+no references remain — or the session exits cleanly — the shared memory
+is freed automatically.
 
-**Important:** Assign the result of
-[`share()`](https://shikokuchuo.net/mori/dev/reference/share.md) to a
-variable — otherwise the garbage collector may free the shared memory
-before a consumer maps it.
+**Important:** Ensure the return value of
+[`share()`](https://shikokuchuo.net/mori/dev/reference/share.md) is not
+garbage collected before a consumer can map its shared memory.
 
 If a process is killed before cleanup can run — a crash, `SIGKILL`, or
 the OOM killer — its region can be left behind.

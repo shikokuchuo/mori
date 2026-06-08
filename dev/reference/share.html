@@ -86,12 +86,12 @@ compactly by its shared memory name (~30 bytes) rather than by its
 contents.</p>
 <p>The shared memory region is managed automatically. It stays alive as long
 as the returned object (or any element extracted from it) is referenced
-in R, and is freed by the garbage collector when no references remain.</p>
+in R, and is freed automatically when no references remain or the session
+exits cleanly.</p>
 <p><code>share()</code> is idempotent: calling it on an object that is already backed by
 shared memory returns the input unchanged without allocating a new region.</p>
-<p><strong>Important</strong>: assign the result of <code>share()</code> to a variable — otherwise
-the garbage collector may free the shared memory before a consumer maps
-it.</p>
+<p><strong>Important</strong>: ensure the return value of <code>share()</code> is not garbage
+collected before a consumer can map its shared memory.</p>
     </div>
     <div class="section level2">
     <h2 id="persistence">Persistence<a class="anchor" aria-label="anchor" href="#persistence"></a></h2>
