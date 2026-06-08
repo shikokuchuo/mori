@@ -60,14 +60,20 @@ mutation.** Each
 allocates a new SHM region with a unique name; existing regions are
 never mutated. The name embeds the creator PID (`mori_<pid>_<counter>`);
 `mori_shm_create` opens with `O_EXCL` (POSIX) / checks
-`ERROR_ALREADY_EXISTS` (Windows) and, on a name collision with an orphan
-left by a crashed same-PID process, bumps the counter and retries
-(`MORI_CREATE_RETRIES`). The host writes the full region inside
-`mori_create` before returning, and consumers obtain the name only after
-that call returns — partial writes are not observable. Consumer mappings
-are read-only (`PROT_READ` / `FILE_MAP_READ`); mutations trigger COW
-into private memory. No locking is implemented or required; any future
-change admitting in-place mutation breaks this model.
+`ERROR_ALREADY_EXISTS` (Windows); a name that already exists — an orphan
+left by a crashed same-PID process — is surfaced as an error
+(`MORI_EEXIST`), never worked around by reusing or mutating the existing
+region.
+[`prune_shared()`](https://shikokuchuo.net/mori/dev/reference/prune_shared.md)
+is the mechanism for clearing such orphans; it must run while the PID is
+free (before reuse), since the colliding process reads its own PID as
+alive and so cannot reap them itself. The host writes the full region
+inside `mori_create` before returning, and consumers obtain the name
+only after that call returns — partial writes are not observable.
+Consumer mappings are read-only (`PROT_READ` / `FILE_MAP_READ`);
+mutations trigger COW into private memory. No locking is implemented or
+required; any future change admitting in-place mutation breaks this
+model.
 
 ## share() Dispatch (`altrep.c: mori_create`)
 
@@ -344,7 +350,7 @@ for sub-objects.
   platforms: a dead-PID region is reported removed only when
   `shm_unlink` actually reclaimed it, so concurrent reaps never
   double-report. Error path: `mori_err_classify` (static; native errno /
-  GetLastError → portable `MORI_ERR_*` category) and `mori_err_describe`
+  GetLastError → portable `MORI_E*` category) and `mori_err_describe`
   (category summary + platform remediation hint); `mori_shm_create` /
   `mori_shm_create_heap` return `MORI_OK` or a failure category,
   classifying the native code **before** any `close` / `unlink` /

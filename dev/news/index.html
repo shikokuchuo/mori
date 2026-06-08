@@ -49,8 +49,6 @@
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="development version" id="mori-development-version">mori (development version)<a class="anchor" aria-label="anchor" href="#mori-development-version"></a></h2>
 <ul><li>New <code><a href="../reference/prune_shared.html">prune_shared()</a></code> removes shared memory regions orphaned by a process that was killed before it could clean up (<a href="https://github.com/shikokuchuo/mori/issues/25" class="external-link">#25</a>).</li>
-<li>
-<code><a href="../reference/share.html">share()</a></code> now retries with a fresh name on a region name collision instead of failing, so we can skip over any orphaned regions left by a previous process that reused the same process ID (common in containers).</li>
 <li>When <code><a href="../reference/share.html">share()</a></code> fails to create a shared memory region it now reports the requested size and, where applicable, an actionable hint (e.g. raising a container’s <code>/dev/shm</code> limit) instead of a generic message (<a href="https://github.com/shikokuchuo/mori/issues/29" class="external-link">#29</a>).</li>
 </ul></div>
     <div class="section level2">

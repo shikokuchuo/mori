@@ -7,10 +7,6 @@
   removes shared memory regions orphaned by a process that was killed
   before it could clean up
   ([\#25](https://github.com/shikokuchuo/mori/issues/25)).
-- [`share()`](https://shikokuchuo.net/mori/dev/reference/share.md) now
-  retries with a fresh name on a region name collision instead of
-  failing, so we can skip over any orphaned regions left by a previous
-  process that reused the same process ID (common in containers).
 - When [`share()`](https://shikokuchuo.net/mori/dev/reference/share.md)
   fails to create a shared memory region it now reports the requested
   size and, where applicable, an actionable hint (e.g. raising a
