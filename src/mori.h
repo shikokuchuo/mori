@@ -58,10 +58,10 @@ typedef struct mori_list_view_s {
    summary and remediation hint. */
 enum {
   MORI_OK = 0,
-  MORI_ERR_NOSPACE,         /* ENOSPC / ERROR_DISK_FULL */
-  MORI_ERR_NOMEM,           /* ENOMEM / commit limit exceeded */
-  MORI_ERR_NAME_COLLISION,  /* unique name not found within retries */
-  MORI_ERR_OTHER
+  MORI_ENOSPC,   /* ENOSPC / ERROR_DISK_FULL */
+  MORI_ENOMEM,   /* ENOMEM / commit limit exceeded */
+  MORI_EEXIST,   /* region name already in use (orphan of a reused PID) */
+  MORI_EOTHER
 };
 
 // shm.c -----------------------------------------------------------------------

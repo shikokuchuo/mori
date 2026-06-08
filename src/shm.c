@@ -2,12 +2,6 @@
 #include <stdio.h>
 #include "mori.h"
 
-/* Retry bound for mori_shm_create on a name collision. A process that reuses a
-   PID after an unclean exit (common in containers) restarts the per-process
-   name counter at 0 and can collide with an orphan left by the dead process;
-   bump the counter and retry rather than fail. */
-#define MORI_CREATE_RETRIES 256
-
 // Platform-specific SHM implementations --------------------------------------
 
 #ifdef _WIN32
@@ -21,14 +15,14 @@
 static int mori_err_classify(long code) {
   switch ((DWORD) code) {
   case ERROR_DISK_FULL:
-    return MORI_ERR_NOSPACE;
+    return MORI_ENOSPC;
   case ERROR_NOT_ENOUGH_MEMORY:
   case ERROR_OUTOFMEMORY:
   case ERROR_COMMITMENT_LIMIT:
   case ERROR_NO_SYSTEM_RESOURCES:
-    return MORI_ERR_NOMEM;
+    return MORI_ENOMEM;
   default:
-    return MORI_ERR_OTHER;
+    return MORI_EOTHER;
   }
 }
 
@@ -48,18 +42,15 @@ int mori_shm_create(mori_shm *shm, size_t size) {
   DWORD hi = (DWORD) ((uint64_t) size >> 32);
   DWORD lo = (DWORD) (size & 0xFFFFFFFF);
 
-  HANDLE h = NULL;
-  for (int attempt = 0; attempt < MORI_CREATE_RETRIES; attempt++) {
-    shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
-    h = CreateFileMappingA(
-      INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, hi, lo, shm->name
-    );
-    if (h == NULL) return mori_err_classify((long) GetLastError());
-    if (GetLastError() != ERROR_ALREADY_EXISTS) break;
-    CloseHandle(h);                          /* opened a pre-existing region */
-    h = NULL;
+  shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
+  HANDLE h = CreateFileMappingA(
+    INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, hi, lo, shm->name
+  );
+  if (h == NULL) return mori_err_classify((long) GetLastError());
+  if (GetLastError() == ERROR_ALREADY_EXISTS) {  /* name already taken */
+    CloseHandle(h);                              /* opened a pre-existing region */
+    return MORI_EEXIST;
   }
-  if (h == NULL) return MORI_ERR_NAME_COLLISION;
 
   void *addr = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, size);
   if (addr == NULL) {
@@ -142,11 +133,11 @@ char **mori_shm_reap(int *n) {
 static int mori_err_classify(long code) {
   switch ((int) code) {
   case ENOSPC:
-    return MORI_ERR_NOSPACE;
+    return MORI_ENOSPC;
   case ENOMEM:
-    return MORI_ERR_NOMEM;
+    return MORI_ENOMEM;
   default:
-    return MORI_ERR_OTHER;
+    return MORI_EOTHER;
   }
 }
 
@@ -438,20 +429,19 @@ static int mori_create_fail(int fd, const char *name, int code) {
   return mori_err_classify(code);
 }
 
+/* Create a new region under a fresh name. O_EXCL never reuses or mutates an
+   existing region (the write-once model); EEXIST means the name is held by an
+   orphan from a crashed process that reused this PID — surfaced as an error
+   rather than worked around, since prune_shared() reclaims such orphans. */
 int mori_shm_create(mori_shm *shm, size_t size) {
 
   shm->addr = NULL;
   shm->size = 0;
 
-  int fd = -1;
-  for (int attempt = 0; attempt < MORI_CREATE_RETRIES; attempt++) {
-    shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
-    fd = mori_shm_os_open(shm->name, O_CREAT | O_EXCL | O_RDWR, 0600);
-    if (fd >= 0) break;
-    if (errno != EEXIST)                    /* a real failure, not a collision */
-      return mori_err_classify(errno);
-  }
-  if (fd < 0) return MORI_ERR_NAME_COLLISION;
+  shm->name_len = (uint8_t) mori_shm_name(shm->name, sizeof(shm->name));
+  int fd = mori_shm_os_open(shm->name, O_CREAT | O_EXCL | O_RDWR, 0600);
+  if (fd < 0)
+    return errno == EEXIST ? MORI_EEXIST : mori_err_classify(errno);
 
 #ifdef __APPLE__
   mori_log_append(shm->name);   /* register before the region escapes */
@@ -549,15 +539,20 @@ void mori_shm_close(mori_shm *shm, int unlink) {
 void mori_err_describe(int category, const char **summary, const char **hint) {
   *hint = "";
   switch (category) {
-  case MORI_ERR_NOSPACE:
+  case MORI_ENOSPC:
     *summary = "out of space";
     *hint = MORI_HINT_NOSPACE;
     break;
-  case MORI_ERR_NOMEM:
+  case MORI_ENOMEM:
     *summary = "not enough memory";
     break;
-  case MORI_ERR_NAME_COLLISION:
-    *summary = "could not find a free region name after repeated retries";
+  case MORI_EEXIST:
+    /* Preventative, not curative: the colliding orphans carry this PID, so the
+       erroring process cannot reap them itself (it reads its own PID as alive)
+       — prune_shared() must run while the PID is free, before reuse. */
+    *summary = "the region name is already in use";
+    *hint = "Clear orphans of crashed processes with prune_shared() before a "
+            "PID is reused.";
     break;
   default:
     *summary = "an unexpected error occurred";
@@ -573,7 +568,7 @@ void mori_err_describe(int category, const char **summary, const char **hint) {
 int mori_shm_create_heap(mori_shm **out, size_t size) {
   *out = NULL;
   mori_shm *shm = malloc(sizeof(mori_shm));
-  if (shm == NULL) return MORI_ERR_NOMEM;
+  if (shm == NULL) return MORI_ENOMEM;
   int rc = mori_shm_create(shm, size);
   if (rc != MORI_OK) {
     free(shm);

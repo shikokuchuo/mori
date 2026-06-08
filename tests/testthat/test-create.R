@@ -1,8 +1,11 @@
-# share() must not fail when the name it would pick collides with an orphan
-# left by a previous process that reused the same PID. This is deterministic
-# only where regions are files we can pre-create (Linux /dev/shm).
+# share() picks a fresh name per call (mori_<pid>_<counter>) and creates it with
+# O_EXCL, so it never reuses or mutates an existing region. A name collision with
+# an orphan left by a previous process that reused the same PID is therefore
+# surfaced as an error (prune_shared() is the mechanism for clearing such
+# orphans), not worked around. Deterministic only where regions are files we can
+# pre-create (Linux /dev/shm).
 
-test_that("share() retries past a colliding orphaned region name", {
+test_that("share() errors when the name it would use is already taken", {
   if (Sys.info()[["sysname"]] != "Linux")
     skip("requires file-backed /dev/shm (Linux only)")
 
@@ -15,41 +18,13 @@ test_that("share() retries past a colliding orphaned region name", {
 
   # Occupy the exact name share() would use next, so its O_EXCL create collides.
   collide <- sprintf("/dev/shm/mori_%s_%x", pid_hex, next_counter)
-  collide_name <- sprintf("/mori_%s_%x", pid_hex, next_counter)
   file.create(collide)
   defer(unlink(collide))
 
-  y <- share(1:10) # would target the occupied name; must retry past it
-  expect_true(is_shared(y))
-  expect_equal(as.integer(y), 1:10)
-  expect_false(identical(shared_name(y), collide_name))
-  expect_true(file.exists(collide)) # the occupying orphan was left untouched
-})
-
-# When every candidate name is taken share() exhausts its retries and must
-# surface the real create-failure message (envelope + requested size + the
-# platform-error description). This is the one creation failure we can trigger
-# deterministically; like the test above it relies on file-backed /dev/shm.
-test_that("share() reports a helpful error when it cannot find a free name", {
-  if (Sys.info()[["sysname"]] != "Linux")
-    skip("requires file-backed /dev/shm (Linux only)")
-
-  x <- share(1:10)
-  nm <- shared_name(x) # "/mori_<pid>_<counter>"
-  parts <- regmatches(nm, regexec("^/mori_([0-9a-f]+)_([0-9a-f]+)$", nm))[[1]]
-  expect_length(parts, 3L)
-  pid_hex <- parts[2]
-  next_counter <- strtoi(parts[3], 16L) + 1L
-
-  # Occupy every name the next share() would try (MORI_CREATE_RETRIES = 256,
-  # counter incremented per attempt) so each O_EXCL create collides.
-  counters <- next_counter + seq_len(256L) - 1L
-  occupied <- sprintf("/dev/shm/mori_%s_%x", pid_hex, counters)
-  file.create(occupied)
-  defer(unlink(occupied))
-
+  # The error envelope carries the requested size, the collision summary, and
+  # the prune_shared() remediation hint.
   expect_error(
     share(1:10),
-    "cannot create region.*free region name"
+    "cannot create region.*already in use.*prune_shared"
   )
 })
