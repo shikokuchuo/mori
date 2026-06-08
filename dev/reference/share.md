@@ -70,7 +70,11 @@ to extract the shared memory name.
 ## Examples
 
 ``` r
-x <- share(rnorm(100))
+x <- share(1:100)
 sum(x)
-#> [1] -3.00474
+#> [1] 5050
+
+lst <- share(list(a = 1:3, b = letters))
+is_shared(lst)
+#> [1] TRUE
 ```
