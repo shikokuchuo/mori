@@ -28,3 +28,14 @@ test_that("share() errors when the name it would use is already taken", {
     "cannot create region.*already in use.*prune_shared"
   )
 })
+
+# 1:1e15 is a compact ALTREP seq (O(1) memory), so share() requests a ~7 PB
+# region without the test ever allocating it, hitting mori_err_classify on the
+# live create failure. The mapped category varies by platform (ENOMEM on macOS,
+# ENOSPC on Linux's size-capped tmpfs), so we assert only the size envelope.
+test_that("share() errors cleanly when the region is too large to back", {
+  expect_error(
+    share(1:1e15),
+    "cannot create region \\(requested .*PB\\)"
+  )
+})
