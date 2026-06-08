@@ -1,4 +1,4 @@
-# mori (development version)
+# mori 0.2.1
 
 * New `prune_shared()` removes shared memory regions orphaned by a process that was killed before it could clean up (#25).
 * When `share()` fails to create a shared memory region it now reports the requested size and, where applicable, an actionable hint (e.g. raising a container's `/dev/shm` limit) instead of a generic message (#29).
