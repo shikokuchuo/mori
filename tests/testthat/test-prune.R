@@ -1,6 +1,6 @@
-# unlink_shared() — removal by name is supported on all POSIX platforms;
-# reaping (no argument) enumerates /dev/shm on Linux and mori's own per-user
-# registry directory (<TMPDIR>/mori) on macOS. Windows is skipped at file level.
+# prune_shared() reclaims regions orphaned by a dead process: it enumerates
+# /dev/shm on Linux and mori's own per-user registry directory (<TMPDIR>/mori)
+# on macOS. Windows cannot orphan shared memory and is skipped at file level.
 
 skip_on_os("windows")
 
@@ -12,10 +12,10 @@ mori_registry_dir <- function() {
   file.path(sub("/+$", "", tmp), "mori")
 }
 
-# The on-disk record reap scans for, for a region with the given "/mori_..."
+# The on-disk record pruning scans for, for a region with the given "/mori_..."
 # name created by `pid`: on Linux the region file in /dev/shm itself; on macOS
 # the process's registry log <TMPDIR>/mori/mori_<pid>, whose lines name that
-# process's regions. Reaping classifies purely by the PID in the name.
+# process's regions. Pruning classifies purely by the PID in the name.
 orphan_record_path <- function(pid, shm_name) {
   if (Sys.info()[["sysname"]] == "Linux")
     file.path("/dev/shm", sub("^/", "", shm_name))
@@ -36,86 +36,35 @@ fabricate_orphan_record <- function(pid, counter = "0") {
   list(record = record, shm_name = shm_name)
 }
 
-test_that("unlink_shared(name) removes a region", {
-  x <- share(rnorm(100))
-  nm <- shared_name(x)
-  rm(x)
-
-  expect_identical(unlink_shared(nm), nm)
-  expect_error(map_shared(nm), "not found")
+test_that("prune_shared() returns invisibly", {
+  expect_invisible(prune_shared())
 })
 
-test_that("unlink_shared() returns invisibly", {
-  x <- share(1:10)
-  nm <- shared_name(x)
-  rm(x)
-  expect_invisible(unlink_shared(nm))
-})
-
-test_that("unlink_shared(name) accepts a sub-object path and removes the region", {
-  x <- share(list(a = 1:10, b = letters))
-  sub_nm <- shared_name(x$a)
-  region <- sub("\\[.*$", "", sub_nm)
-  rm(x)
-
-  expect_match(sub_nm, "\\[", fixed = FALSE)
-  expect_identical(unlink_shared(sub_nm), region)
-  expect_error(map_shared(region), "not found")
-})
-
-test_that("unlink_shared() ignores names that are not mori identifiers", {
-  expect_null(unlink_shared("not_a_mori_name"))
-  expect_null(unlink_shared(c("/etc/passwd", "garbage")))
-})
-
-test_that("unlink_shared() is vectorised and skips NA", {
-  x <- share(1:10)
-  y <- share(letters)
-  nx <- shared_name(x)
-  ny <- shared_name(y)
-  rm(x, y)
-
-  removed <- unlink_shared(c(nx, NA_character_, ny))
-  expect_setequal(removed, c(nx, ny))
-})
-
-test_that("unlinking an already-removed region returns NULL", {
-  x <- share(1:10)
-  nm <- shared_name(x)
-  rm(x)
-  expect_identical(unlink_shared(nm), nm)
-  expect_null(unlink_shared(nm))
-})
-
-test_that("unlink_shared() rejects non-character, non-NULL input", {
-  expect_error(unlink_shared(123), "character vector or NULL")
-})
-
-test_that("unlink_shared() (reap) leaves live regions untouched", {
+test_that("prune_shared() leaves live regions untouched", {
   x <- share(rnorm(100))
   nm <- shared_name(x)
 
-  unlink_shared()
-  expect_silent(y <- map_shared(nm)) # region of a live process survives reaping
+  prune_shared()
+  expect_silent(y <- map_shared(nm)) # region of a live process survives pruning
   expect_equal(sum(y), sum(x))
 })
 
-test_that("unlink_shared() (reap) returns NULL when nothing is orphaned", {
-  unlink_shared()              # clear any pre-existing orphans
-  expect_null(unlink_shared()) # a second reap finds nothing to remove
+test_that("prune_shared() returns NULL when nothing is orphaned", {
+  prune_shared()              # clear any pre-existing orphans
+  expect_null(prune_shared()) # a second prune finds nothing to remove
 })
 
-test_that("unlink_shared() (reap) removes a dead process's orphan", {
+test_that("prune_shared() removes a dead process's orphan", {
   # Spawn a short-lived shell, capture its PID, and let R reap it (system()
   # waits before returning) so the PID is dead. Fabricate an orphan record
-  # named for that PID; the reaper classifies purely by the PID in the name, so
+  # named for that PID; pruning classifies purely by the PID in the name, so
   # this exercises the dead-PID branch deterministically.
   dead_pid <- as.integer(system("echo $$", intern = TRUE))
 
   orphan <- fabricate_orphan_record(dead_pid)
   defer(unlink(orphan$record))
 
-  reaped <- unlink_shared()
+  pruned <- prune_shared()
 
   # The record is cleared on every platform. On Linux the /dev/shm file is a
   # real region, so its name is also reported as removed; on macOS the record is
@@ -123,21 +72,21 @@ test_that("unlink_shared() (reap) removes a dead process's orphan", {
   # reclaim and the name is not reported (reported only when a region was).
   expect_false(file.exists(orphan$record))
   if (Sys.info()[["sysname"]] == "Linux")
-    expect_true(orphan$shm_name %in% reaped)
+    expect_true(orphan$shm_name %in% pruned)
   else
-    expect_false(orphan$shm_name %in% reaped)
+    expect_false(orphan$shm_name %in% pruned)
 })
 
-test_that("unlink_shared() (reap) keeps a live process's record", {
-  # The reaper must skip the current (live) process. Share a real object so this
-  # process owns a registry record, then reap and confirm the record — and the
+test_that("prune_shared() keeps a live process's record", {
+  # Pruning must skip the current (live) process. Share a real object so this
+  # process owns a registry record, then prune and confirm the record — and the
   # region — survive (the live PID is classified alive).
   x <- share(rnorm(100))
   nm <- shared_name(x)
   record <- orphan_record_path(Sys.getpid(), nm)
 
-  reaped <- unlink_shared()
-  expect_false(nm %in% reaped)
+  pruned <- prune_shared()
+  expect_false(nm %in% pruned)
   expect_true(file.exists(record))
   expect_silent(map_shared(nm))
 
@@ -149,18 +98,17 @@ test_that("unlink_shared() (reap) keeps a live process's record", {
 # first share(), pruned once this process's last region is finalised, and
 # recreated on demand. macOS-only — Linux enumerates /dev/shm directly, Windows
 # has no registry. Pruning is finalisation-driven (the process owns one log for
-# all its regions), so removing a region by name does not by itself drop the dir.
+# all its regions).
 
 test_that("a live region keeps the registry directory", {
   skip_on_os(c("linux", "solaris"))
   dir <- mori_registry_dir()
 
-  x <- share(rnorm(10))
-  y <- share(1:5)                  # both held live, so neither can be finalised
+  x <- share(rnorm(10))            # holds the process's log, and so the dir, open
   expect_true(dir.exists(dir))
 
-  unlink_shared(shared_name(x))    # by-name removal leaves the log holding the dir
-  expect_true(dir.exists(dir))
+  rm(x)
+  gc()
 })
 
 test_that("the registry directory is pruned once the last region is finalised", {
@@ -168,11 +116,11 @@ test_that("the registry directory is pruned once the last region is finalised", 
   dir <- mori_registry_dir()
 
   # Isolate the assertion: finalise any unreferenced shared objects (releasing
-  # them from the log) and reap dead-process orphans, so the registry holds
+  # them from the log) and prune dead-process orphans, so the registry holds
   # nothing we do not control. If something still lingers, skip rather than
   # assert racily.
   gc()
-  unlink_shared()
+  prune_shared()
   if (length(list.files(dir, pattern = "^mori_")) != 0)
     skip("registry not empty; cannot isolate the prune assertion")
 
@@ -194,22 +142,22 @@ test_that("share() recreates the registry directory on demand", {
 
   log <- file.path(dir, sprintf("mori_%x", Sys.getpid()))
   expect_true(file.exists(log))               # this process's registry log
-  expect_true(nm %in% readLines(log))         # the region is recorded for reaping
+  expect_true(nm %in% readLines(log))         # the region is recorded for pruning
 
   rm(x)
   gc()
 })
 
-test_that("reaping an idle process does not create the registry directory", {
+test_that("pruning an idle process does not create the registry directory", {
   skip_on_os(c("linux", "solaris"))
   dir <- mori_registry_dir()
 
   gc()                 # finalise unreferenced shared objects (prunes their dir)
-  unlink_shared()      # reap dead-process orphans
+  prune_shared()       # prune dead-process orphans
   if (dir.exists(dir))
     skip("registry still present; cannot isolate")
 
-  # Path resolution is pure: a reap that finds no registry must not create one.
-  expect_null(unlink_shared())
+  # Path resolution is pure: a prune that finds no registry must not create one.
+  expect_null(prune_shared())
   expect_false(dir.exists(dir))
 })

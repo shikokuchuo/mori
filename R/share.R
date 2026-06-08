@@ -123,54 +123,38 @@ is_shared <- function(x) .Call(mori_is_shared, x)
 #' @export
 shared_name <- function(x) .Call(mori_shm_name, x)
 
-#' Unlink Shared Memory Regions
+#' Prune Orphaned Shared Memory Regions
 #'
 #' @description
-#' Remove shared memory regions created by [share()]. Pass one or more region
-#' names to remove specific regions, or call with no arguments to reap
-#' *orphaned* regions: those whose creating process has died without cleaning
-#' up, for example after a crash, a `SIGKILL`, or the out-of-memory killer.
+#' Recover shared memory regions leaked by a process that was killed before it
+#' could clean up — for example after a crash, a `SIGKILL`, or the
+#' out-of-memory killer. **You do not normally need this:** mori frees shared
+#' memory automatically when the [share()] object is garbage-collected and on a
+#' clean R session exit (see Details).
 #'
-#' This function is only needed on Linux and macOS. On Windows, shared memory
+#' This function is only relevant on Linux and macOS. On Windows, shared memory
 #' cannot be orphaned, so there is never anything to clean up and calling it has
 #' no effect.
-#'
-#' @param name a character vector of shared memory names as returned by
-#'   [shared_name()], or `NULL` (the default) to reap orphaned regions. A
-#'   sub-object path (e.g. `"/mori_abc_1[2,3]"`) is accepted and resolves to
-#'   its underlying region. Names that are not valid mori identifiers are
-#'   ignored.
 #'
 #' @details
 #' Shared memory is normally managed automatically: a region is unlinked when
 #' the [share()] object that owns it is garbage-collected, and on a clean R
 #' session exit. A region is only left behind if the owning process is killed
-#' before either can run. `unlink_shared()` removes such leftovers.
+#' before either can run. `prune_shared()` removes such leftovers.
 #'
-#' Unlinking a region removes only its name. Processes that have already mapped
-#' it keep reading until they release it; the memory is freed once the last
-#' mapping is gone.
-#'
-#' The reap form (`name = NULL`) is **conservative**: a region is removed only
-#' if its creating process — encoded in the region name — is no longer
-#' running, so regions still in use by a live process are never touched.
+#' Pruning is **conservative**: a region is removed only if its creating
+#' process (encoded in the region name) is no longer running, so regions
+#' still in use by a live process are never touched. Removing a region unlinks
+#' only its name; processes that have already mapped it keep reading until they
+#' release it, and the memory is freed once the last mapping is gone.
 #'
 #' @return Invisibly, a character vector of the region names that were
 #'   removed, or `NULL` if nothing was removed.
 #'
 #' @examples
-#' x <- share(rnorm(100))
-#' nm <- shared_name(x)
-#' rm(x)
-#' unlink_shared(nm)
-#'
-#' @seealso [share()] to create a shared object, [shared_name()] to extract a
-#'   region name.
+#' # Shared memory is freed automatically - you do not normally call this.
+#' # To prune regions left behind by a crashed process:
+#' prune_shared()
 #'
 #' @export
-unlink_shared <- function(name = NULL) {
-  !is.null(name) &&
-    !is.character(name) &&
-    stop("`name` must be a character vector or NULL.")
-  invisible(.Call(mori_unlink, name))
-}
+prune_shared <- function() invisible(.Call(mori_prune))
