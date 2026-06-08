@@ -43,10 +43,9 @@ references remain.
 by shared memory returns the input unchanged without allocating a new
 region.
 
-**Important**: always assign the result of `share()` to a variable. The
-shared memory is kept alive by the R object reference — if the result is
-used as a temporary (not assigned), the garbage collector may free the
-shared memory before a consumer process has mapped it.
+**Important**: assign the result of `share()` to a variable — otherwise
+the garbage collector may free the shared memory before a consumer maps
+it.
 
 ## Persistence
 
