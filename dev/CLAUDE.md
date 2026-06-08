@@ -17,9 +17,9 @@ ALTREP shared object,
 → extract identifier,
 [`is_shared()`](https://shikokuchuo.net/mori/dev/reference/is_shared.md)
 → test if shared,
-[`unlink_shared()`](https://shikokuchuo.net/mori/dev/reference/unlink_shared.md)
-→ remove regions by name or reap orphans of dead processes. ALTREP
-serialization hooks emit the
+[`prune_shared()`](https://shikokuchuo.net/mori/dev/reference/prune_shared.md)
+→ remove orphaned regions of dead processes. ALTREP serialization hooks
+emit the
 [`shared_name()`](https://shikokuchuo.net/mori/dev/reference/shared_name.md)
 identifier as the wire form — transparent under
 [`serialize()`](https://rdrr.io/r/base/serialize.html) and `mirai`.
@@ -329,8 +329,7 @@ for sub-objects.
   (`MORI_NAME_MAX`, `MORI_MAX_PATH`, `MORI_IDENTIFIER_MAX`,
   `MORI_FORMAT_BUFLEN`, `MORI_PREFIX_LITERAL`).
 - **shm.c** — platform SHM create/open/close + finalizers for both
-  sides. `mori_shm_unlink_name` unlinks by name (all POSIX).
-  `mori_shm_reap` enumerates the platform’s name source
+  sides. `mori_shm_reap` enumerates the platform’s name source
   (`#ifdef`-selected) — `/dev/shm` on Linux (entries are region names),
   the per-user registry dir on macOS (per-process logs; see Platform
   Notes) — classifies by the PID embedded in the name via
@@ -339,17 +338,17 @@ for sub-objects.
   names), and feeds the shared per-name core `mori_reap_unlink`
   (shm_unlink + record-on-reclaim). Windows / other POSIX cannot reap →
   `NULL` / `*n == 0`. `mori_shm_os_unlink` is the single region-unlink
-  seam (host finalizer, by-name unlink, create-fail, reap) and is pure
-  `shm_unlink`; the macOS registry is decoupled from it and managed by
-  `mori_log_append` / `mori_log_release` (see Platform Notes). Reap
-  semantics A, both platforms: a dead-PID region is reported removed
-  only when `shm_unlink` actually reclaimed it, so concurrent reaps
-  never double-report. Error path: `mori_err_classify` (static; native
-  errno / GetLastError → portable `MORI_ERR_*` category) and
-  `mori_err_describe` (category summary + platform remediation hint);
-  `mori_shm_create` / `mori_shm_create_heap` return `MORI_OK` or a
-  failure category, classifying the native code **before** any `close` /
-  `unlink` / `CloseHandle` clobbers `errno` / `GetLastError`.
+  seam (host finalizer, create-fail, reap) and is pure `shm_unlink`; the
+  macOS registry is decoupled from it and managed by `mori_log_append` /
+  `mori_log_release` (see Platform Notes). Reap semantics A, both
+  platforms: a dead-PID region is reported removed only when
+  `shm_unlink` actually reclaimed it, so concurrent reaps never
+  double-report. Error path: `mori_err_classify` (static; native errno /
+  GetLastError → portable `MORI_ERR_*` category) and `mori_err_describe`
+  (category summary + platform remediation hint); `mori_shm_create` /
+  `mori_shm_create_heap` return `MORI_OK` or a failure category,
+  classifying the native code **before** any `close` / `unlink` /
+  `CloseHandle` clobbers `errno` / `GetLastError`.
 - **serialize.c** — `mori_serialize_count`, `mori_serialize_into`,
   `mori_unserialize_from`. Used for fallback (non-zero-copy) ALTLIST
   entries where directory `sexptype == 0`.
@@ -366,21 +365,20 @@ for sub-objects.
   single `Rf_error`.
 - **init.c** — `R_init_mori`, `.Call` registration table (5 entries:
   `mori_create`, `mori_shm_open_and_wrap`, `mori_is_shared`,
-  `mori_shm_name`, `mori_unlink`).
+  `mori_shm_name`, `mori_prune`).
 
 `.Call` names match C function names; all entry points take a single
-`SEXP`.
+`SEXP` except `mori_prune`, which takes none.
 
 ### R/
 
 `mori-package.R` (package docs) and `share.R` (five `.Call` wrappers —
 dispatch and error handling are at the C level;
-[`unlink_shared()`](https://shikokuchuo.net/mori/dev/reference/unlink_shared.md)
-additionally validates input type, delegating removal to `mori_unlink`,
-which returns `NULL` when nothing was removed).
-`import-standalone-defer.R` is a vendored copy of withr’s `defer()`
-(`usethis::use_standalone("r-lib/withr", "defer")`) used only by tests —
-do not edit by hand; refresh via `use_standalone`.
+[`prune_shared()`](https://shikokuchuo.net/mori/dev/reference/prune_shared.md)
+delegates to `mori_prune`, which returns `NULL` when nothing was
+pruned). `import-standalone-defer.R` is a vendored copy of withr’s
+`defer()` (`usethis::use_standalone("r-lib/withr", "defer")`) used only
+by tests — do not edit by hand; refresh via `use_standalone`.
 
 ## Testing
 
@@ -419,14 +417,12 @@ are authoritative). All tests run unconditionally — nothing gated behind
   writer. `mori_log_release` (host finalizer / create-fail) decrements a
   process-global live-region count and, at zero, closes+unlinks the log
   and `rmdir`s the now-empty dir — so the dir tracks the live-region set
-  as the per-region markers did, but driven by finalization, not by-name
-  unlink (`unlink_shared(name)` removes only the region; its log line
-  lingers harmlessly until reap or count-zero). The count is incremented
-  unconditionally so it stays balanced when logging itself fails (which
-  forfeits only reapability, never the region). Fork-safe:
-  `mori_log_fork_guard` reopens the log when `getpid()` changes (the
-  inherited fd is the parent’s — closed, never unlinked). Crash
-  semantics match the regions’: a
+  as the per-region markers did, but driven by finalization. The count
+  is incremented unconditionally so it stays balanced when logging
+  itself fails (which forfeits only reapability, never the region).
+  Fork-safe: `mori_log_fork_guard` reopens the log when `getpid()`
+  changes (the inherited fd is the parent’s — closed, never unlinked).
+  Crash semantics match the regions’: a
   [`write()`](https://rdrr.io/r/base/write.html) is visible
   cross-process via the page cache without `fsync` and survives the
   writer’s death, lost only on reboot. Path resolution (`mori_log_dir`)
