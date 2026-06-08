@@ -470,9 +470,9 @@ int mori_shm_create(mori_shm *shm, size_t size) {
 #ifdef MADV_HUGEPAGE
   if (size >= 2 * 1024 * 1024)
     madvise(addr, size, MADV_HUGEPAGE);
-#elif defined(__APPLE__)
-  madvise(addr, size, MADV_WILLNEED);
 #endif
+  /* No MADV_WILLNEED on macOS: the region is written in full before use, so its
+     pages fault in on demand — prefaulting would be a redundant pass + syscall. */
 
   shm->addr = addr;
   shm->size = size;
@@ -514,9 +514,9 @@ int mori_shm_open(mori_shm *shm, const char *name) {
 #ifdef MADV_HUGEPAGE
   if (size >= 2 * 1024 * 1024)
     madvise(addr, size, MADV_HUGEPAGE);
-#elif defined(__APPLE__)
-  madvise(addr, size, MADV_WILLNEED);
 #endif
+  /* No MADV_WILLNEED on macOS: it would eagerly install PTEs across the whole
+     region, the very prefaulting MAP_POPULATE is omitted above to avoid. */
 
   shm->addr = addr;
   shm->size = size;
