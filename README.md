@@ -86,12 +86,12 @@ boot_mean <- \(i, data) colMeans(data[sample(nrow(data), replace = TRUE), ])
 # Without mori — each daemon deserializes a full copy
 mirai_map(1:8, boot_mean, .args = list(data = df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.709  12.272   8.631
+#>   0.618  13.114   8.370
 
 # With mori — each daemon maps the same shared memory
 mirai_map(1:8, boot_mean, .args = list(data = shared_df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.002   0.004   4.991
+#>   0.002   0.003   4.780
 
 daemons(0)
 ```
@@ -111,7 +111,7 @@ reference between processes without going through serialization:
 x <- share(rnorm(1e6))
 
 shared_name(x)
-#> [1] "/mori_4d1b_1"
+#> [1] "/mori_91ee_1"
 
 # Another process — here the same one — can map the region by name
 y <- map_shared(shared_name(x))
@@ -170,9 +170,9 @@ strings are accessed lazily per element.
 ``` r
 df <- share(as.data.frame(matrix(rnorm(1e7), ncol = 100)))
 shared_name(df)        # one region for all 100 columns
-#> [1] "/mori_4d1b_3"
+#> [1] "/mori_91ee_3"
 shared_name(df[[50]])  # sub-path into the same region
-#> [1] "/mori_4d1b_3[50]"
+#> [1] "/mori_91ee_3[50]"
 ```
 
 ### Lifetime

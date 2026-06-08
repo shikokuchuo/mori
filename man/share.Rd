@@ -54,8 +54,11 @@ which deep-duplicates the object:
 }
 
 \examples{
-x <- share(rnorm(100))
+x <- share(1:100)
 sum(x)
+
+lst <- share(list(a = 1:3, b = letters))
+is_shared(lst)
 
 }
 \seealso{

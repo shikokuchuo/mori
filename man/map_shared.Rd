@@ -27,8 +27,11 @@ ALTREP-backed R object that reads directly from shared memory.
 \examples{
 x <- share(1:100)
 nm <- shared_name(x)
-y <- map_shared(nm)
-sum(y)
+map_shared(nm)
+
+# A bracketed index path opens the addressed sub-object directly:
+lst <- share(list(a = 1:3, b = letters))
+map_shared(shared_name(lst[[2]]))
 
 }
 \seealso{
