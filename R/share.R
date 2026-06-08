@@ -44,8 +44,11 @@
 #' ```
 #'
 #' @examples
-#' x <- share(rnorm(100))
+#' x <- share(1:100)
 #' sum(x)
+#'
+#' lst <- share(list(a = 1:3, b = letters))
+#' is_shared(lst)
 #'
 #' @seealso [map_shared()] to open a shared region by name,
 #'   [shared_name()] to extract the shared memory name.
@@ -73,8 +76,11 @@ share <- function(x) .Call(mori_create, x)
 #' @examples
 #' x <- share(1:100)
 #' nm <- shared_name(x)
-#' y <- map_shared(nm)
-#' sum(y)
+#' map_shared(nm)
+#'
+#' # A bracketed index path opens the addressed sub-object directly:
+#' lst <- share(list(a = 1:3, b = letters))
+#' map_shared(shared_name(lst[[2]]))
 #'
 #' @seealso [share()] to create a shared object, [shared_name()] to extract
 #'   the shared memory name.
@@ -92,9 +98,10 @@ map_shared <- function(name) .Call(mori_shm_open_and_wrap, name)
 #' @return `TRUE` or `FALSE`.
 #'
 #' @examples
-#' x <- share(rnorm(100))
+#' x <- 1:100
+#' y <- share(x)
+#' is_shared(y)
 #' is_shared(x)
-#' is_shared(rnorm(100))
 #'
 #' @export
 is_shared <- function(x) .Call(mori_is_shared, x)
@@ -115,8 +122,12 @@ is_shared <- function(x) .Call(mori_is_shared, x)
 #'   recoverable via `sub("\\[.*$", "", shared_name(x))`.
 #'
 #' @examples
-#' x <- share(rnorm(100))
+#' x <- share(1:100)
 #' shared_name(x)
+#'
+#' # A sub-object extracted from a shared list carries a bracketed index path:
+#' lst <- share(list(a = 1:3, b = letters))
+#' shared_name(lst[[2]])
 #'
 #' @seealso [map_shared()] to open a shared region by name.
 #'

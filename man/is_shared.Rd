@@ -17,8 +17,9 @@ Returns \code{TRUE} if \code{x} is an ALTREP object backed by shared memory
 (created by \code{\link[=share]{share()}} or \code{\link[=map_shared]{map_shared()}}), \code{FALSE} otherwise.
 }
 \examples{
-x <- share(rnorm(100))
+x <- 1:100
+y <- share(x)
+is_shared(y)
 is_shared(x)
-is_shared(rnorm(100))
 
 }

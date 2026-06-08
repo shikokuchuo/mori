@@ -23,8 +23,12 @@ Extract the shared memory name from a shared object. This name can be
 passed to \code{\link[=map_shared]{map_shared()}} to open the same region in another process.
 }
 \examples{
-x <- share(rnorm(100))
+x <- share(1:100)
 shared_name(x)
+
+# A sub-object extracted from a shared list carries a bracketed index path:
+lst <- share(list(a = 1:3, b = letters))
+shared_name(lst[[2]])
 
 }
 \seealso{
