@@ -2,6 +2,10 @@
 
 ## mori (development version)
 
+## mori 0.2.1
+
+CRAN release: 2026-06-09
+
 - New
   [`prune_shared()`](https://shikokuchuo.net/mori/dev/reference/prune_shared.md)
   removes shared memory regions orphaned by a process that was killed
