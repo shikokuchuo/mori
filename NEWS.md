@@ -1,3 +1,5 @@
+# mori (development version)
+
 # mori 0.2.1
 
 * New `prune_shared()` removes shared memory regions orphaned by a process that was killed before it could clean up (#25).
