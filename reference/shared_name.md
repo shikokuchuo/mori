@@ -39,7 +39,12 @@ to open a shared region by name.
 ## Examples
 
 ``` r
-x <- share(rnorm(100))
+x <- share(1:100)
 shared_name(x)
-#> [1] "/mori_19d1_3"
+#> [1] "/mori_1a6e_5"
+
+# A sub-object extracted from a shared list carries a bracketed index path:
+lst <- share(list(a = 1:3, b = letters))
+shared_name(lst[[2]])
+#> [1] "/mori_1a6e_6[2]"
 ```

@@ -25,9 +25,10 @@ is_shared(x)
 ## Examples
 
 ``` r
-x <- share(rnorm(100))
-is_shared(x)
+x <- 1:100
+y <- share(x)
+is_shared(y)
 #> [1] TRUE
-is_shared(rnorm(100))
+is_shared(x)
 #> [1] FALSE
 ```

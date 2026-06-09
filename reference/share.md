@@ -36,17 +36,15 @@ bytes) rather than by its contents.
 
 The shared memory region is managed automatically. It stays alive as
 long as the returned object (or any element extracted from it) is
-referenced in R, and is freed by the garbage collector when no
-references remain.
+referenced in R, and is freed automatically when no references remain or
+the session exits cleanly.
 
 `share()` is idempotent: calling it on an object that is already backed
 by shared memory returns the input unchanged without allocating a new
 region.
 
-**Important**: always assign the result of `share()` to a variable. The
-shared memory is kept alive by the R object reference — if the result is
-used as a temporary (not assigned), the garbage collector may free the
-shared memory before a consumer process has mapped it.
+**Important**: ensure the return value of `share()` is not garbage
+collected before a consumer can map its shared memory.
 
 ## Persistence
 
@@ -70,7 +68,11 @@ to extract the shared memory name.
 ## Examples
 
 ``` r
-x <- share(rnorm(100))
+x <- share(1:100)
 sum(x)
-#> [1] -3.00474
+#> [1] 5050
+
+lst <- share(list(a = 1:3, b = letters))
+is_shared(lst)
+#> [1] TRUE
 ```

@@ -9,6 +9,8 @@
 - [`mori`](https://shikokuchuo.net/mori/reference/mori-package.md)
   [`mori-package`](https://shikokuchuo.net/mori/reference/mori-package.md)
   : mori: Shared Memory for R Objects
+- [`prune_shared()`](https://shikokuchuo.net/mori/reference/prune_shared.md)
+  : Prune Orphaned Shared Memory Regions
 - [`share()`](https://shikokuchuo.net/mori/reference/share.md) : Create
   a Shared Object
 - [`shared_name()`](https://shikokuchuo.net/mori/reference/shared_name.md)

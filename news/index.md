@@ -1,5 +1,20 @@
 # Changelog
 
+## mori 0.2.1
+
+CRAN release: 2026-06-09
+
+- New
+  [`prune_shared()`](https://shikokuchuo.net/mori/reference/prune_shared.md)
+  removes shared memory regions orphaned by a process that was killed
+  before it could clean up
+  ([\#25](https://github.com/shikokuchuo/mori/issues/25)).
+- When [`share()`](https://shikokuchuo.net/mori/reference/share.md)
+  fails to create a shared memory region it now reports the requested
+  size and, where applicable, an actionable hint (e.g. raising a
+  container’s `/dev/shm` limit) instead of a generic message
+  ([\#29](https://github.com/shikokuchuo/mori/issues/29)).
+
 ## mori 0.2.0
 
 CRAN release: 2026-05-09

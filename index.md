@@ -83,12 +83,12 @@ boot_mean <- \(i, data) colMeans(data[sample(nrow(data), replace = TRUE), ])
 # Without mori — each daemon deserializes a full copy
 mirai_map(1:8, boot_mean, .args = list(data = df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.709  12.272   8.631
+#>   0.636  12.832   8.424
 
 # With mori — each daemon maps the same shared memory
 mirai_map(1:8, boot_mean, .args = list(data = shared_df))[] |> system.time()
 #>    user  system elapsed 
-#>   0.002   0.004   4.991
+#>   0.002   0.003   4.787
 
 daemons(0)
 ```
@@ -111,7 +111,7 @@ processes without going through serialization:
 x <- share(rnorm(1e6))
 
 shared_name(x)
-#> [1] "/mori_4d1b_1"
+#> [1] "/mori_d04e_1"
 
 # Another process — here the same one — can map the region by name
 y <- map_shared(shared_name(x))
@@ -178,9 +178,9 @@ strings are accessed lazily per element.
 
 df <- share(as.data.frame(matrix(rnorm(1e7), ncol = 100)))
 shared_name(df)        # one region for all 100 columns
-#> [1] "/mori_4d1b_3"
+#> [1] "/mori_d04e_3"
 shared_name(df[[50]])  # sub-path into the same region
-#> [1] "/mori_4d1b_3[50]"
+#> [1] "/mori_d04e_3[50]"
 ```
 
 ### Lifetime
@@ -190,14 +190,18 @@ region stays alive as long as any shared object backed by it remains
 referenced in R — the original returned by
 [`share()`](https://shikokuchuo.net/mori/reference/share.md), or a
 column or sub-list extracted from it, in this or another process. When
-no references remain, the garbage collector frees the shared memory
-automatically.
+no references remain — or the session exits cleanly — the shared memory
+is freed automatically.
 
-**Important:** Always assign the result of
-[`share()`](https://shikokuchuo.net/mori/reference/share.md) to a
-variable. The shared memory is kept alive by the R object reference — if
-the result is used temporarily (not assigned), the garbage collector may
-free the shared memory before a consumer process has mapped it.
+**Important:** Ensure the return value of
+[`share()`](https://shikokuchuo.net/mori/reference/share.md) is not
+garbage collected before a consumer can map its shared memory.
+
+If a process is killed before cleanup can run — a crash, `SIGKILL`, or
+the OOM killer — its region can be left behind.
+[`prune_shared()`](https://shikokuchuo.net/mori/reference/prune_shared.md)
+reclaims such orphans, removing only regions whose creating process is
+no longer running.
 
 ### Copy-on-write
 
