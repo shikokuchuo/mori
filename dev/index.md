@@ -8,6 +8,9 @@
  \/_______/
 ```
 
+[![Ask
+DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/shikokuchuo/mori)
+
 Shared Memory for R Objects
 
 → [`share()`](https://shikokuchuo.net/mori/dev/reference/share.md)
