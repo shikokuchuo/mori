@@ -18,6 +18,9 @@ coverage](https://codecov.io/gh/shikokuchuo/mori/graph/badge.svg)](https://app.c
     \  /  森   /
      \/_______/
 
+[![Ask
+DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/shikokuchuo/mori)
+
 Shared Memory for R Objects
 
 → `share()` writes an R object into shared memory and returns a shared
