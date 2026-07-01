@@ -1,7 +1,7 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# mori
+# mori <a href="https://shikokuchuo.net/mori/"><img src="man/figures/logo.svg" align="right" height="139" alt="mori website" /></a>
 
 <!-- badges: start -->
 
@@ -11,12 +11,6 @@ status](https://www.r-pkg.org/badges/version/mori)](https://CRAN.R-project.org/p
 [![Codecov test
 coverage](https://codecov.io/gh/shikokuchuo/mori/graph/badge.svg)](https://app.codecov.io/gh/shikokuchuo/mori)
 <!-- badges: end -->
-
-      ________
-     /\ mori  \
-    /  \       \
-    \  /  森   /
-     \/_______/
 
 [![Ask
 DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/shikokuchuo/mori)
