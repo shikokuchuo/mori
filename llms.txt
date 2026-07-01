@@ -1,12 +1,7 @@
 # mori
 
-``` R
-  ________
- /\ mori  \
-/  \       \
-\  /  森   /
- \/_______/
-```
+[![Ask
+DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/shikokuchuo/mori)
 
 Shared Memory for R Objects
 
