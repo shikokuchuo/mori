@@ -34,6 +34,9 @@ test_that("share() errors when the name it would use is already taken", {
 # live create failure. The mapped category varies by platform (ENOMEM on macOS,
 # ENOSPC on Linux's size-capped tmpfs), so we assert only the size envelope.
 test_that("share() errors cleanly when the region is too large to back", {
+  if (.Machine$sizeof.pointer < 8)
+    skip("long vectors unsupported on 32-bit; PB-region path unreachable")
+
   expect_error(
     share(1:1e15),
     "cannot create region \\(requested .*PB\\)"
