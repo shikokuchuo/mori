@@ -55,7 +55,7 @@ shared_df <- share(df)
 ```
 
 Without mori, each worker holds the full data frame. With mori, each
-worker holds a small reference into the shared region:
+worker holds a small reference into the shared memory region:
 
 ``` r
 
@@ -90,16 +90,15 @@ daemons(0)
 
 ## Usage
 
-Workers must run on the same machine — mori shares physical RAM, not
-bytes over a network.
+Workers must run on the same machine as mori shares physical RAM.
 
 ### Sharing by name
 
 [`shared_name()`](https://shikokuchuo.net/mori/reference/shared_name.md)
-returns the shared memory name of a shared object;
+returns the shared memory name of a shared object.
 [`map_shared()`](https://shikokuchuo.net/mori/reference/map_shared.md)
-opens a region by that name — useful for handing a reference between
-processes without going through serialization:
+opens that region by name, which is useful for handing a reference
+between processes without going through serialization:
 
 ``` r
 
@@ -107,8 +106,11 @@ x <- share(rnorm(1e6))
 
 shared_name(x)
 #> [1] "/mori_d04e_1"
+```
 
-# Another process — here the same one — can map the region by name
+``` r
+
+# Another process can map the region by name
 y <- map_shared(shared_name(x))
 identical(x[], y[])
 #> [1] TRUE
@@ -125,13 +127,14 @@ length(serialize(x, NULL))
 #> [1] 124
 ```
 
-This is transparent to any R serialization pathway — `mirai`,
-`parallel`, `callr`, and base R
+This is transparent to any R serialization pathway: `mirai`, `parallel`,
+`callr`, and base R
 [`serialize()`](https://rdrr.io/r/base/serialize.html) all carry shared
 objects as references rather than copies.
 
-Sub-elements of a shared list serialize as references too — each element
-travels as a path into the parent shared region, not as the full data:
+Sub-elements of a shared list serialize as references too. In this case,
+each element travels as a path into the parent shared region, not as the
+full data:
 
 ``` r
 
@@ -155,17 +158,17 @@ All atomic vector types and lists / data frames are written directly
 into shared memory, with attributes preserved end-to-end. Pairlists are
 coerced to lists.
 [`share()`](https://shikokuchuo.net/mori/reference/share.md) returns
-ALTREP wrappers that point into the shared pages — no deserialization,
-no per-process memory allocation.
+ALTREP wrappers that point into the shared memory region. There is no
+deserialization and no per-process memory allocation.
 
 All other R objects (environments, closures, language objects) are
 returned unchanged by
-[`share()`](https://shikokuchuo.net/mori/reference/share.md) — no shared
-memory region is created.
+[`share()`](https://shikokuchuo.net/mori/reference/share.md), with no
+shared memory region created.
 
 ### Lazy access
 
-A data frame lives in a single shared region; columns are read on
+A data frame lives in a single shared region. Columns are read on
 demand, so a worker that needs 3 of 100 columns only loads 3. Character
 strings are accessed lazily per element.
 
@@ -185,15 +188,15 @@ region stays alive as long as any shared object backed by it remains
 referenced in R — the original returned by
 [`share()`](https://shikokuchuo.net/mori/reference/share.md), or a
 column or sub-list extracted from it, in this or another process. When
-no references remain — or the session exits cleanly — the shared memory
-is freed automatically.
+no references remain, or the session exits cleanly, the shared memory is
+freed automatically.
 
 **Important:** Ensure the return value of
 [`share()`](https://shikokuchuo.net/mori/reference/share.md) is not
 garbage collected before a consumer can map its shared memory.
 
-If a process is killed before cleanup can run — a crash, `SIGKILL`, or
-the OOM killer — its region can be left behind.
+If a process is killed before cleanup can run (a crash, `SIGKILL`, or
+the OOM killer) its region can be left behind.
 [`prune_shared()`](https://shikokuchuo.net/mori/reference/prune_shared.md)
 reclaims such orphans, removing only regions whose creating process is
 no longer running.
