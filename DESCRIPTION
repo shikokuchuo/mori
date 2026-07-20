@@ -19,7 +19,6 @@ BugReports: https://github.com/shikokuchuo/mori/issues
 Depends:
     R (>= 4.3)
 Suggests:
-    lobstr,
     mirai,
     testthat (>= 3.0.0)
 Config/build/compilation-database: true
