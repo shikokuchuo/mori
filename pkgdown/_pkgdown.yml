@@ -1,6 +1,12 @@
 url: https://shikokuchuo.net/mori/
 template:
   bootstrap: 5
+
+  opengraph:
+    image:
+      src: https://raw.githubusercontent.com/shikokuchuo/mori/main/dev/images/mori.png
+      alt: "mori"
+
   bslib:
     primary: "#0043ce"
     base_font: {google: {family: "Source Sans Pro", wght: [400, 600], ital: [0, 1]}}
