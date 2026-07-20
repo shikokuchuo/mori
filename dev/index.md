@@ -105,7 +105,7 @@ between processes without going through serialization:
 x <- share(rnorm(1e6))
 
 shared_name(x)
-#> [1] "/mori_d04e_1"
+#> [1] "/mori_bb52_a9956ee7"
 ```
 
 ``` r
@@ -124,7 +124,7 @@ the serialized form is a few bytes regardless of the data size:
 ``` r
 
 length(serialize(x, NULL))
-#> [1] 124
+#> [1] 131
 ```
 
 This is transparent to any R serialization pathway: `mirai`, `parallel`,
@@ -176,9 +176,9 @@ strings are accessed lazily per element.
 
 df <- share(as.data.frame(matrix(rnorm(1e7), ncol = 100)))
 shared_name(df)        # one region for all 100 columns
-#> [1] "/mori_d04e_3"
+#> [1] "/mori_bb52_a9956ee9"
 shared_name(df[[50]])  # sub-path into the same region
-#> [1] "/mori_d04e_3[50]"
+#> [1] "/mori_bb52_a9956ee9[50]"
 ```
 
 ### Lifetime

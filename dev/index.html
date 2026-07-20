@@ -147,7 +147,7 @@
 <code class="sourceCode R"><span><span class="va">x</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/share.html">share</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">1e6</span><span class="op">)</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="reference/shared_name.html">shared_name</a></span><span class="op">(</span><span class="va">x</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] "/mori_d04e_1"</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] "/mori_bb52_a9956ee7"</span></span></code></pre></div>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># Another process can map the region by name</span></span>
 <span><span class="va">y</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/map_shared.html">map_shared</a></span><span class="op">(</span><span class="fu"><a href="reference/shared_name.html">shared_name</a></span><span class="op">(</span><span class="va">x</span><span class="op">)</span><span class="op">)</span></span>
@@ -160,7 +160,7 @@
 <p>The ALTREP serialization hooks emit the same identifier on the wire, so the serialized form is a few bytes regardless of the data size:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/serialize.html" class="external-link">serialize</a></span><span class="op">(</span><span class="va">x</span>, <span class="cn">NULL</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] 124</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 131</span></span></code></pre></div>
 <p>This is transparent to any R serialization pathway: <code>mirai</code>, <code>parallel</code>, <code>callr</code>, and base R <code><a href="https://rdrr.io/r/base/serialize.html" class="external-link">serialize()</a></code> all carry shared objects as references rather than copies.</p>
 <p>Sub-elements of a shared list serialize as references too. In this case, each element travels as a path into the parent shared region, not as the full data:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
@@ -192,9 +192,9 @@
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">df</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/share.html">share</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/as.data.frame.html" class="external-link">as.data.frame</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">1e7</span><span class="op">)</span>, ncol <span class="op">=</span> <span class="fl">100</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="reference/shared_name.html">shared_name</a></span><span class="op">(</span><span class="va">df</span><span class="op">)</span>        <span class="co"># one region for all 100 columns</span></span>
-<span><span class="co">#&gt; [1] "/mori_d04e_3"</span></span>
+<span><span class="co">#&gt; [1] "/mori_bb52_a9956ee9"</span></span>
 <span><span class="fu"><a href="reference/shared_name.html">shared_name</a></span><span class="op">(</span><span class="va">df</span><span class="op">[[</span><span class="fl">50</span><span class="op">]</span><span class="op">]</span><span class="op">)</span>  <span class="co"># sub-path into the same region</span></span>
-<span><span class="co">#&gt; [1] "/mori_d04e_3[50]"</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] "/mori_bb52_a9956ee9[50]"</span></span></code></pre></div>
 </div>
 <div class="section level3">
 <h3 id="lifetime">Lifetime<a class="anchor" aria-label="anchor" href="#lifetime"></a>
