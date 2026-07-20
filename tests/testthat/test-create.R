@@ -14,10 +14,16 @@ test_that("share() errors when the name it would use is already taken", {
   parts <- regmatches(nm, regexec("^/mori_([0-9a-f]+)_([0-9a-f]+)$", nm))[[1]]
   expect_length(parts, 3L)
   pid_hex <- parts[2]
-  next_counter <- strtoi(parts[3], 16L) + 1L
+  # The counter is a random uint32; parse as double (strtoi() overflows R's
+  # signed int above 2^31) and format the next value as C's "%x" would.
+  counter <- as.numeric(paste0("0x", parts[3]))
+  next_counter <- (counter + 1) %% 2^32
+  hi <- next_counter %/% 0x10000
+  lo <- next_counter %% 0x10000
+  next_hex <- if (hi > 0) sprintf("%x%04x", hi, lo) else sprintf("%x", lo)
 
   # Occupy the exact name share() would use next, so its O_EXCL create collides.
-  collide <- sprintf("/dev/shm/mori_%s_%x", pid_hex, next_counter)
+  collide <- sprintf("/dev/shm/mori_%s_%s", pid_hex, next_hex)
   file.create(collide)
   defer(unlink(collide))
 

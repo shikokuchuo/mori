@@ -1,5 +1,7 @@
 # mori (development version)
 
+* Region name counters now start at a per-process random value, so a process reusing a crashed process's PID no longer collides with its orphaned regions (#50).
+
 # mori 0.2.1
 
 * New `prune_shared()` removes shared memory regions orphaned by a process that was killed before it could clean up (#25).
