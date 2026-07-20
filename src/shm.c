@@ -2,6 +2,18 @@
 #include <stdio.h>
 #include "mori.h"
 
+/* Seeds the region-name counter (splitmix64 finalizer): from a fixed origin,
+   a process reusing a dead creator's PID would regenerate its names and
+   collide with any orphans it left (MORI_EEXIST). Spread suffices — no
+   cryptographic strength needed. Fork needs no guard: names embed the live
+   PID. */
+static unsigned int mori_counter_seed(uint64_t x) {
+  x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
+  x ^= x >> 27; x *= 0x94d049bb133111ebULL;
+  x ^= x >> 31;
+  return (unsigned int) x;
+}
+
 // Platform-specific SHM implementations --------------------------------------
 
 #ifdef _WIN32
@@ -27,7 +39,16 @@ static int mori_err_classify(long code) {
 }
 
 static size_t mori_shm_name(char *name, size_t size) {
-  static unsigned int counter = 0;
+  static unsigned int counter;
+  static int seeded;
+  if (!seeded) {
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    counter = mori_counter_seed((uint64_t) t.QuadPart ^
+                                ((uint64_t) GetCurrentProcessId() << 40) ^
+                                (uint64_t) (uintptr_t) &counter);
+    seeded = 1;
+  }
   int n = snprintf(name, size, MORI_PREFIX_LITERAL "%lx_%x",
                    (unsigned long) GetCurrentProcessId(), counter++);
   return (n > 0 && (size_t) n < size) ? (size_t) n : 0;
@@ -117,6 +138,7 @@ char **mori_shm_reap(int *n) {
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
+#include <time.h>
 
 #ifndef MAP_POPULATE
 #define MAP_POPULATE 0
@@ -411,7 +433,17 @@ char **mori_shm_reap(int *n) {
 #endif /* __linux__ || __APPLE__ */
 
 static size_t mori_shm_name(char *name, size_t size) {
-  static unsigned int counter = 0;
+  static unsigned int counter;
+  static int seeded;
+  if (!seeded) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    counter = mori_counter_seed(((uint64_t) ts.tv_sec << 32) ^
+                                (uint64_t) ts.tv_nsec ^
+                                ((uint64_t) getpid() << 40) ^
+                                (uint64_t) (uintptr_t) &counter);
+    seeded = 1;
+  }
   int n = snprintf(name, size, MORI_PREFIX_LITERAL "%x_%x",
                    (unsigned) getpid(), counter++);
   return (n > 0 && (size_t) n < size) ? (size_t) n : 0;
