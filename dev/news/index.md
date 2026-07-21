@@ -2,6 +2,10 @@
 
 ## mori (development version)
 
+## mori 0.2.2
+
+CRAN release: 2026-07-21
+
 - Region name counters now start at a per-process random value, so a
   process reusing a crashed process’s PID no longer collides with its
   orphaned regions
