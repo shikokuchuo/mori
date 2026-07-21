@@ -58,12 +58,14 @@ mori is **write-once on host, read-many on consumers, COW for any
 mutation.** Each
 [`share()`](https://shikokuchuo.net/mori/reference/share.md) allocates a
 new SHM region with a unique name; existing regions are never mutated.
-The name embeds the creator PID (`mori_<pid>_<counter>`);
-`mori_shm_create` opens with `O_EXCL` (POSIX) / checks
-`ERROR_ALREADY_EXISTS` (Windows); a name that already exists — an orphan
-left by a crashed same-PID process — is surfaced as an error
-(`MORI_EEXIST`), never worked around by reusing or mutating the existing
-region.
+The name embeds the creator PID (`mori_<pid>_<counter>`); the counter
+starts at a per-process random value (seeded on first use in
+`mori_shm_name`), so colliding with a dead same-PID incarnation’s names
+additionally requires a ~2^-32 counter overlap; `mori_shm_create` opens
+with `O_EXCL` (POSIX) / checks `ERROR_ALREADY_EXISTS` (Windows); a name
+that already exists — an orphan left by a crashed same-PID process — is
+surfaced as an error (`MORI_EEXIST`), never worked around by reusing or
+mutating the existing region.
 [`prune_shared()`](https://shikokuchuo.net/mori/reference/prune_shared.md)
 is the mechanism for clearing such orphans; it must run while the PID is
 free (before reuse), since the colliding process reads its own PID as
